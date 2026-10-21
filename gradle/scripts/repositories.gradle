@@ -1,0 +1,24 @@
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    maven {
+        name = "Architectury"
+        url = "https://maven.architectury.dev/"
+    }
+    // NeoForged 源（完整镜像：net.neoforged.*、cpw.mods.*、net.minecraftforge.*）。
+    // 官方 maven.neoforged.net 在国内会被 DNS 污染（解析到 157.240.x.x，连接超时），
+    // 且 fabric-loader:+ 这类动态版本会向所有仓库取 metadata 而卡在它上面，
+    // 故此处不声明官方源；需要时（如依赖 NeoForged 快照）可自行加回。
+    maven {
+        name = "NeoForged Mirror (ForgeCDN)"
+        url = "https://neoforged.forgecdn.net/releases"
+    }
+    maven {
+        name = "NeoForged Mirror (BMCLAPI)"
+        url = "https://bmclapi2.bangbang93.com/maven"
+    }
+}

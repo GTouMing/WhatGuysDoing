@@ -1,0 +1,13 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [{
+    "description": {"identifier": "geometry.what_guys_doing.endermite", "texture_width": 64, "texture_height": 32, "visible_bounds_width": 4, "visible_bounds_height": 4, "visible_bounds_offset": [0, 2, 0]},
+    "bones": [
+      {"name":"root","pivot":[0,24,0]},
+      {"name":"segment2","parent":"root","pivot":[0,3,3],"rotation":[0,1.05807,0],"cubes":[{"origin":[-1.5,0,2.5],"size":[3,3,1],"uv":{"up":{"uv":[1,14],"uv_size":[3,1]},"down":{"uv":[4,14],"uv_size":[3,1]},"west":{"uv":[0,15],"uv_size":[1,3]},"north":{"uv":[1,15],"uv_size":[3,3]},"east":{"uv":[4,15],"uv_size":[1,3]},"south":{"uv":[5,15],"uv_size":[3,3]}}}]},
+      {"name":"segment1","parent":"root","pivot":[0.14262,4,0],"rotation":[0,3.20765,0],"cubes":[{"origin":[-2.85738,0,-2.5],"size":[6,4,5],"uv":{"up":{"uv":[5,5],"uv_size":[6,5]},"down":{"uv":[11,5],"uv_size":[6,5]},"west":{"uv":[0,10],"uv_size":[5,4]},"north":{"uv":[5,10],"uv_size":[6,4]},"east":{"uv":[11,10],"uv_size":[5,4]},"south":{"uv":[16,10],"uv_size":[6,4]}}}]},
+      {"name":"segment0","parent":"root","pivot":[0,3,-3.5],"rotation":[0,5.4,0],"cubes":[{"origin":[-2,0,-4.5],"size":[4,3,2],"uv":{"up":{"uv":[2,0],"uv_size":[4,2]},"down":{"uv":[6,0],"uv_size":[4,2]},"west":{"uv":[0,2],"uv_size":[2,3]},"north":{"uv":[2,2],"uv_size":[4,3]},"east":{"uv":[6,2],"uv_size":[2,3]},"south":{"uv":[8,2],"uv_size":[4,3]}}}]},
+      {"name":"segment3","parent":"root","pivot":[0.31029,2,4],"rotation":[0,0.56337,0],"cubes":[{"origin":[-0.18971,0,3.5],"size":[1,2,1],"uv":{"up":{"uv":[1,18],"uv_size":[1,1]},"down":{"uv":[2,18],"uv_size":[1,1]},"west":{"uv":[0,19],"uv_size":[1,2]},"north":{"uv":[1,19],"uv_size":[1,2]},"east":{"uv":[2,19],"uv_size":[1,2]},"south":{"uv":[3,19],"uv_size":[1,2]}}}]}
+    ]
+  }]
+}

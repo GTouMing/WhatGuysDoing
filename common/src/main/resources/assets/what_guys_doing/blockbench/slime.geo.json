@@ -1,0 +1,13 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [{
+    "description": {"identifier": "geometry.what_guys_doing.slime", "texture_width": 64, "texture_height": 32, "visible_bounds_width": 4, "visible_bounds_height": 4, "visible_bounds_offset": [0, 2, 0]},
+    "bones": [
+      {"name":"root","pivot":[0,24,0]},
+      {"name":"right_eye","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[-3.25,4,-3.5],"size":[2,2,2],"uv":{"up":{"uv":[34,0],"uv_size":[2,2]},"down":{"uv":[36,0],"uv_size":[2,2]},"west":{"uv":[32,2],"uv_size":[2,2]},"north":{"uv":[34,2],"uv_size":[2,2]},"east":{"uv":[36,2],"uv_size":[2,2]},"south":{"uv":[38,2],"uv_size":[2,2]}}}]},
+      {"name":"mouth","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[0,2,-3.5],"size":[1,1,1],"uv":{"up":{"uv":[33,8],"uv_size":[1,1]},"down":{"uv":[34,8],"uv_size":[1,1]},"west":{"uv":[32,9],"uv_size":[1,1]},"north":{"uv":[33,9],"uv_size":[1,1]},"east":{"uv":[34,9],"uv_size":[1,1]},"south":{"uv":[35,9],"uv_size":[1,1]}}}]},
+      {"name":"left_eye","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[1.25,4,-3.5],"size":[2,2,2],"uv":{"up":{"uv":[34,4],"uv_size":[2,2]},"down":{"uv":[36,4],"uv_size":[2,2]},"west":{"uv":[32,6],"uv_size":[2,2]},"north":{"uv":[34,6],"uv_size":[2,2]},"east":{"uv":[36,6],"uv_size":[2,2]},"south":{"uv":[38,6],"uv_size":[2,2]}}}]},
+      {"name":"cube","parent":"root","pivot":[0,24,0],"cubes":[{"origin":[-3,1,-3],"size":[6,6,6],"uv":{"up":{"uv":[6,16],"uv_size":[6,6]},"down":{"uv":[12,16],"uv_size":[6,6]},"west":{"uv":[0,22],"uv_size":[6,6]},"north":{"uv":[6,22],"uv_size":[6,6]},"east":{"uv":[12,22],"uv_size":[6,6]},"south":{"uv":[18,22],"uv_size":[6,6]}}}]}
+    ]
+  }]
+}

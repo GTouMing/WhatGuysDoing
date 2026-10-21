@@ -1,0 +1,1 @@
+{"id":"minecraft:sheep","base":{"geometry":"geometry.what_guys_doing.sheep","texture":"entity/sheep/sheep","texture_size":[64,32]},"layers":[{"geometry":"geometry.what_guys_doing.sheep_SheepFurLayer","texture":"minecraft:textures/entity/sheep/sheep_fur.png","texture_size":[64,32],"name":"SheepFurLayer"}]}

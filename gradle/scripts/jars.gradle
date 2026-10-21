@@ -1,0 +1,7 @@
+base {
+    archivesName = "$rootProject.archives_name-${project.name}"
+}
+
+jar {
+    from(rootProject.file("LICENSE.txt"))
+}

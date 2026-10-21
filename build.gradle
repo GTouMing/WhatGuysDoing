@@ -1,0 +1,50 @@
+plugins {
+    alias libs.plugins.architecturyLoom apply false
+    alias libs.plugins.architecturyPlugin
+    alias libs.plugins.shadow apply false
+    alias libs.plugins.lombok apply false
+}
+
+architectury {
+    minecraft = project.minecraft_version
+}
+
+allprojects {
+    group = rootProject.maven_group
+    version = rootProject.mod_version
+}
+
+subprojects {
+    apply plugin: 'dev.architectury.loom'
+    apply plugin: 'architectury-plugin'
+    apply plugin: 'maven-publish'
+    apply plugin: 'io.freefair.lombok'
+
+    lombok {
+        version = "1.18.34"
+    }
+
+    dependencies {
+        minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
+        mappings loom.officialMojangMappings()
+    }
+
+    java {
+        // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+        // if it is present.
+        // If you remove this line, sources will not be generated.
+        withSourcesJar()
+
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        it.options.release = 21
+    }
+
+    apply from: "$rootDir/gradle/scripts/repositories.gradle"
+    apply from: "$rootDir/gradle/scripts/jars.gradle"
+    apply from: "$rootDir/gradle/scripts/publishing.gradle"
+    apply from: "$rootDir/gradle/scripts/resources.gradle"
+}

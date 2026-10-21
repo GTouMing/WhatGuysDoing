@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "github.gtouming.what_guys_doing.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+    "LevelChunkMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

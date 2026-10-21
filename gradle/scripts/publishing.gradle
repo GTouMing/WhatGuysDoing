@@ -1,0 +1,25 @@
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = base.archivesName.get()
+            from components.java
+        }
+    }
+    repositories {
+        def MAVEN_URL = System.getenv("MAVEN_URL")
+        if (MAVEN_URL != null) {
+            maven {
+                url MAVEN_URL
+                credentials {
+                    username System.getenv("MAVEN_USERNAME")
+                    password System.getenv("MAVEN_PASSWORD")
+                }
+            }
+        } else {
+            maven {
+                url "file://${project.projectDir}/repo"
+            }
+            mavenLocal()
+        }
+    }
+}

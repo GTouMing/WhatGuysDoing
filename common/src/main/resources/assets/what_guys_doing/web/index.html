@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhatGuysDoing — M0 数据通道调试视图</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d12; }
+  #c { display: block; width: 100vw; height: 100vh; }
+  #hud {
+    position: fixed; top: 10px; left: 10px; padding: 10px 12px;
+    font: 12px/1.6 ui-monospace, Consolas, monospace; color: #cfe3ff;
+    background: rgba(10, 14, 20, .78); border: 1px solid #263449; border-radius: 8px;
+    white-space: pre; pointer-events: none;
+  }
+  #help {
+    position: fixed; bottom: 10px; left: 10px; padding: 8px 10px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace; color: #8fa6c4;
+    background: rgba(10, 14, 20, .7); border: 1px solid #263449; border-radius: 8px;
+    pointer-events: none;
+  }
+  #err {
+    position: fixed; inset: 0; display: none; place-content: center; padding: 40px;
+    font: 14px/1.7 ui-monospace, Consolas, monospace; color: #ffb4b4; background: #12070a;
+    white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">连接中…</div>
+<div id="help">点击画面锁定鼠标（ESC 退出，锁定不可用时按住左键拖动）· WASD：移动 · Shift：加速 · 空格/Ctrl：升/降 · 滚轮：调速 · [ ]：改订阅半径 · B：烘焙/方块实例 · R：重建图集 · T：看图集 · G：导出崩溃现场</div>
+<div id="err"></div>
+<canvas id="atlasview" width="512" height="512" style="display:none;position:fixed;right:8px;top:8px;width:384px;height:384px;image-rendering:pixelated;background:#111;border:1px solid #555;z-index:5"></canvas>
+<script type="module" src="app.js"></script>
+</body>
+</html>
