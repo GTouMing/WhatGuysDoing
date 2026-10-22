@@ -65,6 +65,14 @@ expect('矩阵含 1/16 缩放', Math.abs(Math.abs(m[0]) - 1 / 16) < 1e-6, String
   expect('有头 part', headIndex >= 0);
   expect('limbSwing 改了腿 part 矩阵', differs(leg));
   expect('headYaw/pitch 改了头 part 矩阵', differs(head));
+  if (headIndex >= 0) {
+    const h180 = buildEntityPartInstances(templates, [{ ...entity, headYaw: 180 }], typeKeys, 0)
+      .get(`minecraft:pig|0\t${headIndex}`)?.matrices;
+    const h270 = buildEntityPartInstances(templates, [{ ...entity, headYaw: 270 }], typeKeys, 0)
+      .get(`minecraft:pig|0\t${headIndex}`)?.matrices;
+    expect('头部相对 yaw 夹在 ±90°',
+      !!h180 && !!h270 && h180.every((v, i) => Math.abs(v - h270[i]) < 1e-5));
+  }
 }
 
 console.log('\n=== 3. 羊皮毛色 tint ===');
@@ -421,6 +429,14 @@ console.log('\n=== 17. 默认 Steve 玩家模型 ===');
   expect('player skin 变体模板存在', skinTpls.has('minecraft:player|1'));
   expect('player cape 层存在', !!skinTpls.get('minecraft:player|1')?.parts.some(p => p.name === 'cape'));
   {
+    const noCape = buildEntityPartTemplates(bundle, keys, uvRectFor, {
+      playerSkins: [skin],
+      hasTexture: () => false,
+    });
+    expect('无披风贴图时不加 cape 层',
+      !noCape.get('minecraft:player|1')?.parts.some(p => p.name === 'cape'));
+  }
+  {
     const capeTpl = skinTpls.get('minecraft:player|1');
     const capePart = capeTpl ? capeTpl.parts.findIndex(p => p.name === 'cape') : -1;
     if (capePart >= 0) {
@@ -503,6 +519,19 @@ const same = (a, b) => Math.abs(a - b) < 1e-5;
 expect('包围盒 x 一致', same(minX, tMinX) && same(maxX, tMaxX), `${minX}/${maxX} vs ${tMinX}/${tMaxX}`);
 expect('包围盒 y 一致', same(minY, tMinY) && same(maxY, tMaxY), `${minY}/${maxY} vs ${tMinY}/${tMaxY}`);
 expect('包围盒 z 一致', same(minZ, tMinZ) && same(maxZ, tMaxZ), `${minZ}/${maxZ} vs ${tMinZ}/${tMaxZ}`);
+
+console.log('\n=== 10. 马头组动画 ===');
+{
+  const keys = new Map([[131, 'minecraft:horse']]);
+  const tpls = buildEntityPartTemplates(bundle, keys, uvRectFor);
+  const tpl = tpls.get('minecraft:horse|0');
+  const roleOf = name => tpl ? tpl.parts.find(p => p.name === name)?.role : null;
+  expect('horse 有 headParts', !!tpl?.parts.some(p => p.name === 'headParts'));
+  expect('horse 有 head', !!tpl?.parts.some(p => p.name === 'head'));
+  for (const name of ['headParts', 'head', 'mane', 'upper_mouth', 'right_ear', 'left_ear']) {
+    expect(`horse ${name} 属于 head 组`, roleOf(name) === 'head', String(roleOf(name)));
+  }
+}
 
 console.log('\n=== 11. 坐下姿态 ===');
 {

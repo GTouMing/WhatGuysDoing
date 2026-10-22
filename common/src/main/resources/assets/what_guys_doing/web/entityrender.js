@@ -170,7 +170,8 @@ function partRole(name) {
   if (n === 'body') return 'body';
   if (n.includes('tail')) return 'tail';
   if (n.includes('wing')) return 'wing';
-  if (n.includes('head')) return 'head';
+  if (n === 'head' || n === 'headparts' || n === 'mane' || n === 'upper_mouth'
+      || n === 'right_ear' || n === 'left_ear') return 'head';
   if (n.includes('leg') || n.includes('haunch') || n.includes('thigh')) return 'leg';
   if (n.includes('arm') || n.includes('sleeve') || n.includes('hand')) return 'arm';
   return null;
@@ -202,8 +203,9 @@ function partAnimationMatrix(part, entity, time) {
   if (part.role === 'head') {
     const headYaw = entity.headYaw ?? entity.yaw ?? 0;
     const rel = ((headYaw - (entity.yaw || 0) + 540) % 360) - 180;
+    const clamped = Math.max(-90, Math.min(90, rel));
     const pitch = entity.pitch || 0;
-    rotation = mul(rotY(-rel * DEG), rotX(-pitch * DEG));
+    rotation = mul(rotY(-clamped * DEG), rotX(-pitch * DEG));
   } else if (part.role === 'leg') {
     const amp = Math.min(1, Math.max(0, (entity.limbSwing || 0) / 255)) * 0.9;
     if (amp <= 1e-6) return null;
@@ -337,6 +339,7 @@ export function buildEntityPartTemplates(bundle, typeKeys, uvRectFor, options = 
     if (typeKey === 'minecraft:player') {
       addVariant(`${typeKey}|0`, info.modelKey, info.parts, model, baseTexture, baseTexture);
       const playerSkins = Array.isArray(options.playerSkins) ? options.playerSkins : [];
+      const hasTexture = typeof options.hasTexture === 'function' ? options.hasTexture : () => true;
       playerSkins.forEach((skin, i) => {
         const skinModelKey = skin && skin.model === 'slim' ? 'player_slim' : 'player';
         const skinModel = bundle.models[skinModelKey] || model;
@@ -347,11 +350,12 @@ export function buildEntityPartTemplates(bundle, typeKeys, uvRectFor, options = 
         const skinTexture = skin && skin.path ? skin.path : (typeof skin === 'string' ? skin : null);
         const capeModel = bundle.models.player_cape;
         const capePivot = capeModel && capeModel.pivots ? capeModel.pivots.cape : null;
-        const capeParts = skin && skin.cape && capeModel
-          ? bakeEntityModel(capeModel, skin.cape).map(part => ({
+        const capePath = skin && skin.cape && hasTexture(skin.cape) ? skin.cape : null;
+        const capeParts = capePath && capeModel
+          ? bakeEntityModel(capeModel, capePath).map(part => ({
             ...part,
             pivot: capePivot,
-            quads: part.quads.map(quad => ({ ...quad, texture: skin.cape })),
+            quads: part.quads.map(quad => ({ ...quad, texture: capePath })),
           }))
           : [];
         const variantParts = capeParts.length ? [...skinParts, ...capeParts] : skinParts;
