@@ -68,7 +68,7 @@ async function refreshEntityTypes() {
 }
 
 // 构建标记：HUD 上可见，用来确认浏览器跑的就是当前这份代码（排查"改了没变化"的第一件事）
-const BUILD_TAG = 'uv63';
+const BUILD_TAG = 'uv101';
 
 const NEIGHBORS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 const FLOATS_PER_INSTANCE = 7;
@@ -230,7 +230,7 @@ function handleMessage(buffer) {
         const typeId = r.u16();
         const dimId = r.u8();               // v2：维度随记录走
         const mask = r.u32();               // v2：掩码加宽到 u32
-        const e = state.entities.get(netId) || { netId, x: 0, y: 0, z: 0, yaw: 0, flags: 0, health: 0 };
+        const e = state.entities.get(netId) || { netId, x: 0, y: 0, z: 0, yaw: 0, flags: 0, equipment: 0, leatherColors: [0, 0, 0, 0], health: 0 };
         e.netId = netId;
         e.typeId = typeId;
         e.dimId = dimId;
@@ -238,10 +238,10 @@ function handleMessage(buffer) {
         if (mask & ENTITY_FLAG.POS) { e.x = r.fixed(512); e.y = r.fixed(512); e.z = r.fixed(512); }
         if (mask & ENTITY_FLAG.MOTION) { r.fixed(512); r.fixed(512); r.fixed(512); }
         if (mask & ENTITY_FLAG.ROT) { e.yaw = r.angle(); e.pitch = r.angleSigned(); }
-        if (mask & ENTITY_FLAG.HEAD_ROT) r.angle();
+        if (mask & ENTITY_FLAG.HEAD_ROT) e.headYaw = r.angle();
         if (mask & ENTITY_FLAG.FLAGS) e.flags = r.u16();
         if (mask & ENTITY_FLAG.HEALTH) e.health = r.u16() / 10;
-        if (mask & ENTITY_FLAG.POSE) r.u8();
+        if (mask & ENTITY_FLAG.POSE) e.pose = r.u8();
         if (mask & ENTITY_FLAG.VEHICLE) r.varUInt();
         if (mask & ENTITY_FLAG.ITEM) r.varUInt();
         if (mask & ENTITY_FLAG.PLAYER) { e.slot = r.u8(); e.gameMode = r.u8(); }
@@ -252,7 +252,12 @@ function handleMessage(buffer) {
         if (mask & ENTITY_FLAG.PLAYER_UUID) {
           const hi = r.u64();
           const lo = r.u64();
-          e.uuid = (hi === 0 && lo === 0) ? null : `${hi.toString(16)}${lo.toString(16)}`;
+          e.uuid = (hi === 0 && lo === 0) ? null
+            : `${hi.toString(16).padStart(16, '0')}${lo.toString(16).padStart(16, '0')}`;
+        }
+        if (mask & ENTITY_FLAG.EQUIP) e.equipment = r.u16();
+        if (mask & ENTITY_FLAG.TINT) {
+          e.leatherColors = [r.u32(), r.u32(), r.u32(), r.u32()];
         }
         state.entities.set(netId, e);
         entityDirty = true;
@@ -390,14 +395,14 @@ function rebuildInstances(dirtyBudget) {
     if (o >= total) break;
     const isPlayer = e.typeId === state.playerTypeId;
     const isHostile = (e.flags & 0x10) !== 0;
-    // 实体已经走 entitybundle 的真实几何；默认的淡蓝色占位方块不再绘制。
-    // 玩家（黄色）和敌对（红色）标记保留，用于模型缺失时定位。
-    if (!isPlayer && !isHostile) continue;
-    const color = isPlayer ? [1.0, 0.85, 0.2] : [1.0, 0.35, 0.2];
+    // 实体已经走 entitybundle 的真实几何；玩家现在也有默认 Steve 模型，
+    // 不再画黄色/淡蓝色占位；敌对标记保留用于缺模型定位。
+    if (isPlayer || !isHostile) continue;
+    const color = [1.0, 0.35, 0.2];
     const b = o * FLOATS_PER_INSTANCE;
     instanceData[b] = e.x; instanceData[b + 1] = e.y + 1.0; instanceData[b + 2] = e.z;
     instanceData[b + 3] = color[0]; instanceData[b + 4] = color[1]; instanceData[b + 5] = color[2];
-    instanceData[b + 6] = isPlayer ? 0.62 : 0.86;
+    instanceData[b + 6] = 0.86;
     o++;
   }
   instanceCount = o;
@@ -627,6 +632,7 @@ struct Uniforms { viewProj: mat4x4f };
 struct VSOut {
   @builtin(position) pos: vec4f,
   @location(0) uv: vec2f,
+  @location(1) color: vec3f,
 };
 
 @vertex
@@ -637,11 +643,13 @@ fn vs(
   @location(3) m1: vec4f,
   @location(4) m2: vec4f,
   @location(5) m3: vec4f,
+  @location(6) color: vec4f,
 ) -> VSOut {
   var out: VSOut;
   let m = mat4x4f(m0, m1, m2, m3);
   out.pos = u.viewProj * m * vec4f(position, 1.0);
   out.uv = uv;
+  out.color = color.rgb;
   return out;
 }
 
@@ -649,7 +657,7 @@ fn vs(
 fn fs(in: VSOut) -> @location(0) vec4f {
   let texel = textureSample(atlasTex, atlasSampler, in.uv);
   if (texel.a < 0.5) { discard; }
-  return vec4f(texel.rgb, 1.0);
+  return vec4f(texel.rgb * in.color, 1.0);
 }
 `;
 
@@ -744,10 +752,19 @@ async function fetchTextureBitmap(path) {
 
 /** 实体贴图的路径已经带 `textures/…png`，与方块路径的拼接规则不同。 */
 async function fetchEntityTextureBitmap(ref) {
-  const url = `/assets/minecraft/${ref.replace(/^minecraft:/, '')}`;
+  let url;
+  if (ref.startsWith('wgd:skins/')) {
+    url = `/assets/skins/${ref.slice('wgd:skins/'.length)}`;
+  } else if (ref.startsWith('wgd:capes/')) {
+    url = `/assets/capes/${ref.slice('wgd:capes/'.length)}`;
+  } else {
+    url = `/assets/minecraft/${ref.replace(/^minecraft:/, '')}`;
+  }
   const response = await fetch(url);
   if (!response.ok) return null;
-  return createImageBitmap(await response.blob());
+  const bitmap = await createImageBitmap(await response.blob());
+  const model = response.headers.get('x-skin-model');
+  return ref.startsWith('wgd:skins/') ? { bitmap, model: model || 'wide' } : bitmap;
 }
 
 /**
@@ -761,7 +778,7 @@ function queueEntityAtlasBuild(reason, options = {}) {
   if (entityAtlasBuild) return entityAtlasBuild;
 
   entityAtlasBuild = atlasBuildChain.then(async () => {
-    const paths = entityTexturePaths(entityBundle);
+    const paths = entityTexturePaths(entityBundle, [...playerSkinPaths(), ...playerCapePaths()]);
     if (!paths.length) return null;
     // 在构建**开始时**记下资产状态：若抽取恰好在这几秒内完成，这一代仍是缺贴图的，必须再重建一次。
     const assetStateAtStart = assetStatus ? assetStatus.state : 'unknown';
@@ -1075,13 +1092,14 @@ function createBakedPipelines() {
             ],
           },
           {
-            arrayStride: 64,
+            arrayStride: 80,
             stepMode: 'instance',
             attributes: [
               { shaderLocation: 2, offset: 0, format: 'float32x4' },
               { shaderLocation: 3, offset: 16, format: 'float32x4' },
               { shaderLocation: 4, offset: 32, format: 'float32x4' },
               { shaderLocation: 5, offset: 48, format: 'float32x4' },
+              { shaderLocation: 6, offset: 64, format: 'float32x4' },
             ],
           },
         ],
@@ -1310,6 +1328,8 @@ const ENTITY_PART_RENDER = typeof location === 'undefined'
 let entityPartTemplates = null;
 let entityPartAtlas = null;
 let entityPartKeyCount = -1;
+let entityPartSkinKey = '';
+let entityPartSkins = [];
 const entityPartBuckets = new Map();
 let entityPartAtlasBindGroup = null;
 let entityPartDraws = 0;
@@ -1325,9 +1345,40 @@ function destroyEntityPartResources() {
   entityPartTemplates = null;
 }
 
+function playerSkinEntries() {
+  const out = [];
+  const seen = new Set();
+  for (const e of state.entities.values()) {
+    if (e.typeId !== state.playerTypeId || !e.uuid) continue;
+    const path = `wgd:skins/${e.uuid}.png`;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const model = baked.entityAtlas && baked.entityAtlas.skinModels
+      ? baked.entityAtlas.skinModels.get(path) || 'wide'
+      : 'wide';
+    out.push({ path, model, cape: `wgd:capes/${e.uuid}.png` });
+  }
+  return out;
+}
+
+function playerSkinPaths() {
+  return playerSkinEntries().map(e => e.path);
+}
+
+function playerCapePaths() {
+  return playerSkinEntries().map(e => e.cape).filter(Boolean);
+}
+
 function ensureEntityPartDraw() {
   if (!baked.ready || !baked.entityAtlas || !entityBundle || !baked.entityPartPipeline) return false;
   const device = gpu.device;
+  const skins = playerSkinEntries();
+  const skinKey = skins.map(e => e.path + ':' + e.model + ':' + (e.cape || '')).join('|');
+  if (skinKey !== entityPartSkinKey) {
+    entityPartSkinKey = skinKey;
+    entityPartSkins = skins;
+    queueEntityAtlasBuild('player skins', { force: true });
+  }
   const atlasChanged = entityPartAtlas !== baked.entityAtlas;
   const keysChanged = entityPartKeyCount !== entityTypeKeys.size;
   if (!entityPartTemplates || atlasChanged || keysChanged) {
@@ -1336,6 +1387,7 @@ function ensureEntityPartDraw() {
       entityBundle,
       entityTypeKeys,
       path => baked.entityAtlas.uvRect(path),
+      { playerSkins: entityPartSkins },
     );
     entityPartAtlas = baked.entityAtlas;
     entityPartKeyCount = entityTypeKeys.size;
@@ -1375,20 +1427,34 @@ function ensureEntityPartDraw() {
     entityPartTemplates,
     [...state.entities.values()],
     entityTypeKeys,
+    performance.now() / 1000,
+    {
+      skinIndexOf: entity => {
+        if (!entity.uuid) return 0;
+        const path = `wgd:skins/${entity.uuid}.png`;
+        return Math.max(0, entityPartSkins.findIndex(e => e.path === path) + 1);
+      },
+    },
   );
   for (const [key, data] of instances) {
     const bucket = entityPartBuckets.get(key);
     if (!bucket || !data.count) continue;
-    const bytes = data.count * 64;
-    if (!bucket.instanceBuffer || bucket.instanceCapacity * 64 < bytes) {
+    const strideFloats = 20;
+    const bytes = data.count * strideFloats * 4;
+    if (!bucket.instanceBuffer || bucket.instanceCapacity * strideFloats * 4 < bytes) {
       if (bucket.instanceBuffer) bucket.instanceBuffer.destroy();
       bucket.instanceCapacity = Math.max(data.count, 64);
       bucket.instanceBuffer = device.createBuffer({
-        size: bucket.instanceCapacity * 64,
+        size: bucket.instanceCapacity * strideFloats * 4,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
     }
-    device.queue.writeBuffer(bucket.instanceBuffer, 0, data.matrices);
+    const packed = new Float32Array(data.count * strideFloats);
+    for (let i = 0; i < data.count; i++) {
+      packed.set(data.matrices.subarray(i * 16, i * 16 + 16), i * strideFloats);
+      packed.set(data.colors.subarray(i * 4, i * 4 + 4), i * strideFloats + 16);
+    }
+    device.queue.writeBuffer(bucket.instanceBuffer, 0, packed);
     bucket.count = data.count;
     entityPartInstanceCount += data.count;
   }

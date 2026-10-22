@@ -102,6 +102,15 @@ public final class EntityDeltaCodec {
                 w.u64(uuid == null ? 0L : uuid.getMostSignificantBits());
                 w.u64(uuid == null ? 0L : uuid.getLeastSignificantBits());
             }
+            if ((mask & Msg.ENTITY_FLAG_EQUIP) != 0) {
+                w.u16(e.equipment());
+            }
+            if ((mask & Msg.ENTITY_FLAG_TINT) != 0) {
+                w.u32(e.leatherHead());
+                w.u32(e.leatherChest());
+                w.u32(e.leatherLegs());
+                w.u32(e.leatherFeet());
+            }
             last.put(e.netId(), e);
         }
         prevArray = entities;
@@ -157,6 +166,15 @@ public final class EntityDeltaCodec {
         }
         if (!java.util.Objects.equals(a.uuid(), b.uuid())) {
             mask |= Msg.ENTITY_FLAG_PLAYER_UUID;
+        }
+        if (a.equipment() != b.equipment()) {
+            mask |= Msg.ENTITY_FLAG_EQUIP;
+        }
+        if (a.leatherHead() != b.leatherHead()
+                || a.leatherChest() != b.leatherChest()
+                || a.leatherLegs() != b.leatherLegs()
+                || a.leatherFeet() != b.leatherFeet()) {
+            mask |= Msg.ENTITY_FLAG_TINT;
         }
         return mask;
     }

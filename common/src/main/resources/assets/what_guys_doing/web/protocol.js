@@ -17,9 +17,10 @@ export const PONG = 0x83;
 export const ENTITY_FLAG = {
   POS: 1 << 0, MOTION: 1 << 1, ROT: 1 << 2, HEAD_ROT: 1 << 3, FLAGS: 1 << 4,
   HEALTH: 1 << 5, POSE: 1 << 6, VEHICLE: 1 << 7, ITEM: 1 << 8, PLAYER: 1 << 9,
-  // v2 新增（掩码同时加宽为 u32）. EQUIP(1<<14) 暂未启用
+  // v2 新增（掩码同时加宽为 u32）
   VARIANT: 1 << 10, ANIM: 1 << 11, NAME: 1 << 12, PLAYER_UUID: 1 << 13,
-  ALL: 0x7FFF,
+  EQUIP: 1 << 14, TINT: 1 << 15,
+  ALL: 0xFFFF,
 };
 
 /** 小端/低位优先的读取器。注意：不要再用 `bytes` 当字段名（会遮蔽 bytes() 方法）。 */

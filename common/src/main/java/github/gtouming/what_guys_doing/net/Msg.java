@@ -39,8 +39,9 @@ public final class Msg {
     public static final int ENTITY_FLAG_ANIM = 1 << 11;          // u8 肢体摆动 + u8 挥手进度
     public static final int ENTITY_FLAG_NAME = 1 << 12;          // u8 可见 + UTF 名字
     public static final int ENTITY_FLAG_PLAYER_UUID = 1 << 13;   // 16 字节 UUID（取皮肤）
-    /** 1<<14 预留给 EQUIP（副手/护甲），等装备通路打通后再启用；**不要**在这里置位。 */
-    public static final int ENTITY_FLAG_ALL = 0x7FFF;
+    public static final int ENTITY_FLAG_EQUIP = 1 << 14;         // u16 护甲材质位
+    public static final int ENTITY_FLAG_TINT = 1 << 15;          // u32 皮革染色 0xRRGGBB
+    public static final int ENTITY_FLAG_ALL = 0xFFFF;
 
     private Msg() {
     }
