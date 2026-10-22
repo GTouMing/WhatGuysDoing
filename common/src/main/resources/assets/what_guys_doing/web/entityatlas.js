@@ -276,7 +276,10 @@ export async function buildEntityAtlas(device, texturePaths, options = {}) {
       targetCtx.drawImage(canvas, 0, 0, width, height, 0, 0, width * scale, height * scale);
     },
     tiles: tiles.size,
-    hasTexture: path => tiles.has(path),
+    hasTexture: path => {
+      const tile = tiles.get(path);
+      return !!tile && !missing.includes(path);
+    },
     missing,
     uvRect,
     tileOf: path => {

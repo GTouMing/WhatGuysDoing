@@ -348,6 +348,7 @@ public final class WorldSampler {
         boolean nameVisible = entity.hasCustomName() && entity.isCustomNameVisible();
         String name = entity.hasCustomName() ? entity.getCustomName().getString() : null;
         java.util.UUID uuid = entity instanceof Player player ? player.getUUID() : null;
+        float bodyYaw = entity instanceof LivingEntity living ? living.yBodyRot : entity.getYRot();
 
         int equipment = 0;
         int leatherHead = 0;
@@ -367,7 +368,7 @@ public final class WorldSampler {
 
         return new EntitySnapshot(dimId, entity.getId(), BuiltInRegistries.ENTITY_TYPE.getId(entity.getType()),
                 pos.x, pos.y, pos.z, motion.x, motion.y, motion.z,
-                entity.getYRot(), entity.getXRot(), entity.getYHeadRot(),
+                bodyYaw, entity.getXRot(), entity.getYHeadRot(),
                 flags, entity.getPose().ordinal(), vehicle == null ? -1 : vehicle.getId(),
                 health, itemId, selectedSlot, gameMode,
                 variantBits, equipment, leatherHead, leatherChest, leatherLegs, leatherFeet,

@@ -68,7 +68,7 @@ async function refreshEntityTypes() {
 }
 
 // 构建标记：HUD 上可见，用来确认浏览器跑的就是当前这份代码（排查"改了没变化"的第一件事）
-const BUILD_TAG = 'uv101';
+const BUILD_TAG = 'uv104';
 
 const NEIGHBORS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 const FLOATS_PER_INSTANCE = 7;
@@ -1387,7 +1387,7 @@ function ensureEntityPartDraw() {
       entityBundle,
       entityTypeKeys,
       path => baked.entityAtlas.uvRect(path),
-      { playerSkins: entityPartSkins },
+      { playerSkins: entityPartSkins, hasTexture: path => baked.entityAtlas.hasTexture(path) },
     );
     entityPartAtlas = baked.entityAtlas;
     entityPartKeyCount = entityTypeKeys.size;
