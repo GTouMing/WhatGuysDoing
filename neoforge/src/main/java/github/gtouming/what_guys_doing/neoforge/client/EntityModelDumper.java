@@ -66,7 +66,9 @@ public final class EntityModelDumper {
     private static final Set<String> SAFE_LAYER_NAMES = Set.of(
             "SheepFurLayer",
             "MooshroomMushroomLayer",
-            "SnowGolemPumpkinLayer"
+            "SnowGolemPumpkinLayer",
+            "WolfCollarLayer",
+            "CatCollarLayer"
     );
 
     private static boolean done;
@@ -202,7 +204,7 @@ public final class EntityModelDumper {
                 if (!SAFE_LAYER_NAMES.contains(layerName)) {
                     continue;
                 }
-                String layerJson = dumpLayer(mc, layer, entity, id, geoDir, layerMetas);
+                String layerJson = dumpLayer(mc, layer, entity, id, geoDir, layerMetas, model);
                 if (layerJson != null) {
                     layerJsons.add(layerJson);
                 }
@@ -512,12 +514,17 @@ public final class EntityModelDumper {
      * 只导出能反射到「EntityModel 字段 + ResourceLocation 贴图字段」的层；动态贴图/颜色层的后续再补。
      */
     private static String dumpLayer(Minecraft mc, Object layer, Entity entity, ResourceLocation id,
-                                    Path geoDir, List<String> layerMetas) {
+                                    Path geoDir, List<String> layerMetas, EntityModel<?> fallbackModel) {
+        String layerName = layer.getClass().getSimpleName();
         EntityModel<?> model = layerModel(layer);
+        // WolfCollarLayer 没有自己的 model 字段，它复用 wolf 的 base model + collar texture。
+        if (model == null && "WolfCollarLayer".equals(layerName)) {
+            model = fallbackModel;
+        }
         ResourceLocation texture = layerTexture(layer);
         if (model == null || texture == null) {
             WhatGuysDoing.LOGGER.info("dump: layer {} skipped (model={}, texture={})",
-                    layer.getClass().getSimpleName(), model != null, texture);
+                    layerName, model != null, texture);
             return null;
         }
         neutralizePose(model, entity);

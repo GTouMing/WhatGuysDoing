@@ -60,7 +60,7 @@ export function familyTexturePath(modelKey) {
 
 function bakeGeneratedParts(model, fallback) {
   const parts = [];
-  const addGroup = (group, fallbackTexture, textureSize) => {
+  const addGroup = (group, fallbackTexture, textureSize, tint = null, condition = null) => {
     for (const part of group || []) {
       const quads = [];
       for (const cube of part.cubes || []) {
@@ -94,13 +94,14 @@ function bakeGeneratedParts(model, fallback) {
           });
         }
       }
-      if (quads.length) parts.push({ name: part.name || '', quads });
+      if (quads.length) parts.push({ name: part.name || '', quads, tint: part.tint || tint, condition: part.condition || condition });
     }
   };
-  addGroup(model.parts, fallback, model.texture_size);
+  addGroup(model.parts, fallback, model.texture_size, null, null);
   // RenderLayer 模型（羊毛外壳等）与基础模型一起渲染；层贴图由 layer.texture 兜底。
   for (const layer of model.layers || []) {
-    addGroup(layer.parts, layer.texture || null, layer.texture_size || model.texture_size);
+    addGroup(layer.parts, layer.texture || null, layer.texture_size || model.texture_size,
+      layer.tint || null, layer.condition || null);
   }
   return parts;
 }
@@ -233,16 +234,23 @@ export function entityPartsFor(bundle, typeKey) {
  * bundle 里所有模型引用到的贴图（去重，保持模型顺序）。
  * 图集必须覆盖全部模型，而不只是当前 entitystates。
  */
-export function entityTexturePaths(bundle) {
+export function entityTexturePaths(bundle, extraPaths = []) {
   const paths = new Set();
   const models = bundle && bundle.models;
-  if (!models) return [];
+  if (!models) return extraPaths.slice();
   for (const key of Object.keys(models)) {
     const model = resolveEntityModel(models, key);
     if (!model) continue;
     for (const part of bakeEntityModel(model, familyTexturePath(key))) {
       for (const quad of part.quads) paths.add(quad.texture);
     }
+    for (const ref of model.variantTextures || []) {
+      const path = entityTexturePath(model, ref);
+      if (path) paths.add(path);
+    }
+  }
+  for (const path of extraPaths) {
+    if (path) paths.add(path);
   }
   return [...paths];
 }

@@ -148,15 +148,24 @@ export async function buildEntityAtlas(device, texturePaths, options = {}) {
   const concurrency = positiveInt(options.concurrency, 16);
 
   const bitmaps = new Array(paths.length);
+  const skinModels = new Array(paths.length);
   let cursor = 0;
   async function prefetch() {
     for (;;) {
       const i = cursor++;
       if (i >= paths.length) return;
       try {
-        bitmaps[i] = await options.fetchTexture(paths[i]);
+        const result = await options.fetchTexture(paths[i]);
+        if (result && result.bitmap) {
+          bitmaps[i] = result.bitmap;
+          skinModels[i] = result.model || 'wide';
+        } else {
+          bitmaps[i] = result;
+          skinModels[i] = 'wide';
+        }
       } catch {
         bitmaps[i] = null;
+        skinModels[i] = 'wide';
       }
     }
   }
@@ -277,6 +286,7 @@ export async function buildEntityAtlas(device, texturePaths, options = {}) {
     alphaMode: path => (tiles.has(path) ? tiles.get(path).alphaMode : ALPHA_OPAQUE),
     materialOf: path => (tiles.has(path) && tiles.get(path).alphaMode === ALPHA_TRANSLUCENT
       ? MATERIAL_TRANSLUCENT : MATERIAL_SOLID),
+    skinModels: new Map(paths.map((path, i) => [path, skinModels[i] || 'wide'])),
     unknownRequests: () => unknownRequests,
     stats: {
       tiles: tiles.size, opaque, cutout, translucent, missing: missing.length,

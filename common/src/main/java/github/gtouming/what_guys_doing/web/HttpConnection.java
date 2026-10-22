@@ -146,6 +146,60 @@ public final class HttpConnection implements Runnable {
             respond(out, 200, "OK", "application/json; charset=utf-8", body, null, keepAlive);
             return keepAlive;
         }
+        if (path.startsWith("/assets/skins/") && path.endsWith(".png")) {
+            String uuid = path.substring("/assets/skins/".length(), path.length() - ".png".length());
+            AssetCache cache = hub.assets();
+            byte[] fallback = null;
+            java.nio.file.Path skinDir = null;
+            if (cache != null) {
+                java.nio.file.Path content = cache.contentDir();
+                java.nio.file.Path defaultFile = content.resolve(
+                        "minecraft/textures/entity/player/wide/steve.png");
+                try {
+                    if (java.nio.file.Files.isRegularFile(defaultFile)) {
+                        fallback = java.nio.file.Files.readAllBytes(defaultFile);
+                    }
+                } catch (Exception ignored) {
+                }
+                skinDir = content.getParent().resolve("skins");
+            }
+            SkinCache.Skin skin = SkinCache.get(uuid, fallback, skinDir);
+            if (skin.bytes() == null) {
+                respond(out, 404, "Not Found", "text/plain; charset=utf-8",
+                        "player skin unavailable".getBytes(StandardCharsets.UTF_8), null, keepAlive);
+                return keepAlive;
+            }
+            byte[] body = "HEAD".equals(method) ? new byte[0] : skin.bytes();
+            String head = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + body.length
+                    + "\r\nX-Skin-Model: " + skin.model()
+                    + "\r\nConnection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
+            out.write(head.getBytes(StandardCharsets.US_ASCII));
+            out.write(body);
+            out.flush();
+            return keepAlive;
+        }
+        if (path.startsWith("/assets/capes/") && path.endsWith(".png")) {
+            String uuid = path.substring("/assets/capes/".length(), path.length() - ".png".length());
+            AssetCache cache = hub.assets();
+            java.nio.file.Path skinDir = null;
+            if (cache != null) {
+                skinDir = cache.contentDir().getParent().resolve("skins");
+            }
+            SkinCache.Skin skin = SkinCache.get(uuid, null, skinDir);
+            byte[] cape = skin.cape();
+            if (cape == null) {
+                respond(out, 404, "Not Found", "text/plain; charset=utf-8",
+                        "player cape unavailable".getBytes(StandardCharsets.UTF_8), null, keepAlive);
+                return keepAlive;
+            }
+            byte[] body = "HEAD".equals(method) ? new byte[0] : cape;
+            String head = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + body.length
+                    + "\r\nConnection: " + (keepAlive ? "keep-alive" : "close") + "\r\n\r\n";
+            out.write(head.getBytes(StandardCharsets.US_ASCII));
+            out.write(body);
+            out.flush();
+            return keepAlive;
+        }
         if (path.startsWith("/assets/")) {
             AssetCache cache = hub.assets();
             AssetCache.FileEntry entry = cache == null ? null : cache.open(path.substring("/assets/".length()));

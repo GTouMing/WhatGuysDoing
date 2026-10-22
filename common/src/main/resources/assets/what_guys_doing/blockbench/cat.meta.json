@@ -1,1 +1,1 @@
-{"id":"minecraft:cat","base":{"geometry":"geometry.what_guys_doing.cat","texture":"entity/cat/black","texture_size":[64,32]},"layers":[]}
+{"id":"minecraft:cat","base":{"geometry":"geometry.what_guys_doing.cat","texture":"entity/cat/black","texture_size":[64,32]},"layers":[{"geometry":"geometry.what_guys_doing.cat_CatCollarLayer","texture":"minecraft:textures/entity/cat/cat_collar.png","texture_size":[64,32],"name":"CatCollarLayer"}]}

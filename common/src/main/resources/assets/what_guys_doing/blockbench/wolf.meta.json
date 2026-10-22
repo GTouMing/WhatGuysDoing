@@ -1,1 +1,1 @@
-{"id":"minecraft:wolf","base":{"geometry":"geometry.what_guys_doing.wolf","texture":"entity/wolf/wolf","texture_size":[64,32]},"layers":[]}
+{"id":"minecraft:wolf","base":{"geometry":"geometry.what_guys_doing.wolf","texture":"entity/wolf/wolf","texture_size":[64,32]},"layers":[{"geometry":"geometry.what_guys_doing.wolf_WolfCollarLayer","texture":"minecraft:textures/entity/wolf/wolf_collar.png","texture_size":[64,32],"name":"WolfCollarLayer"}]}

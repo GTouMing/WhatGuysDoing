@@ -12,6 +12,9 @@
 import { entityPartsFor } from './entitymodel.js';
 
 const DEG = Math.PI / 180;
+const FLAG_BABY = 1 << 13;
+const FLAG_SWIMMING = 1 << 2;
+const FLAG_SLEEPING = 1 << 12;
 
 export function buildEntityMesh(bundle, entities, typeKeys, uvRectFor, materialOf, partsFor = entityPartsFor) {
   const positions = [];
@@ -34,6 +37,8 @@ export function buildEntityMesh(bundle, entities, typeKeys, uvRectFor, materialO
     const rad = (180 - (e.yaw || 0)) * DEG;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
+    const scale = (e.flags & FLAG_BABY) ? 0.5 / 16 : 1 / 16;
+    const swimming = (e.flags & (FLAG_SWIMMING | FLAG_SLEEPING)) !== 0;
     for (const part of info.parts) {
       for (const quad of part.quads) {
         const rect = uvRectFor(quad.texture);
@@ -42,9 +47,15 @@ export function buildEntityMesh(bundle, entities, typeKeys, uvRectFor, materialO
         const du = rect[2] - rect[0];
         const dv = rect[3] - rect[1];
         for (const v of quad.verts) {
-          const mx = v[0] / 16;
-          const my = v[1] / 16;
-          const mz = v[2] / 16;
+          const mx = v[0] * scale;
+          let my = v[1] * scale;
+          let mz = v[2] * scale;
+          if (swimming) {
+            const ny = mz;
+            const nz = -my;
+            my = ny;
+            mz = nz;
+          }
           // rotateY(rad)
           const wx = mx * cos + mz * sin;
           const wz = -mx * sin + mz * cos;

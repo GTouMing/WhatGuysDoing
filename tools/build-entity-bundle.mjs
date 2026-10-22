@@ -70,7 +70,9 @@ function bakeGeometry(geo, texture, textureRef) {
   };
 
   const parts = [];
+  const pivots = {};
   for (const bone of bones) {
+    if (bone.pivot) pivots[bone.name] = bone.pivot;
     if (!Array.isArray(bone.cubes) || !bone.cubes.length) continue;
     const world = worldOf(bone);
     const cubes = [];
@@ -109,7 +111,7 @@ function bakeGeometry(geo, texture, textureRef) {
     });
     if (cubes.length) parts.push({ name: bone.name, cubes });
   }
-  return { parts, texture_size: [W, H] };
+  return { parts, texture_size: [W, H], pivots };
 }
 
 const geoFiles = new Map();
@@ -117,6 +119,163 @@ for (const file of fs.readdirSync(GEO_DIR).filter(f => f.endsWith('.geo.json')))
   geoFiles.set(file.replace('.geo.json', ''), JSON.parse(fs.readFileSync(path.join(GEO_DIR, file), 'utf8')));
 }
 const metaFiles = fs.readdirSync(GEO_DIR).filter(f => f.endsWith('.meta.json'));
+
+function layerOverlay(name) {
+  if (name === 'SheepFurLayer') return { tint: 'sheep', condition: 'not_sheared' };
+  if (name === 'WolfCollarLayer') return { tint: 'wolf_collar', condition: 'tame' };
+  if (name === 'CatCollarLayer') return { tint: 'cat_collar', condition: 'tame' };
+  return { tint: null, condition: null };
+}
+
+// 与 WorldSampler.CAT_VARIANTS 保持同序；variantBits 12..15 是本体纹理索引。
+const CAT_VARIANTS = [
+  'tabby', 'black', 'red', 'siamese', 'british_shorthair',
+  'calico', 'persian', 'ragdoll', 'white', 'jellie', 'all_black',
+];
+// 与 WorldSampler.WOLF_VARIANTS 同序；每个变体 3 张：wild/tame/angry。
+const WOLF_VARIANTS = [
+  'pale', 'ashen', 'black', 'chestnut', 'rusty',
+  'snowy', 'spotted', 'striped', 'woods',
+];
+// 与 WorldSampler.HORSE_VARIANTS 同序（Horse.Variant ordinal）。
+const HORSE_VARIANTS = [
+  'white', 'creamy', 'chestnut', 'brown', 'black', 'gray', 'darkbrown',
+];
+// 与 WorldSampler.PARROT_VARIANTS 同序（Parrot.Variant ordinal）。
+const PARROT_VARIANTS = ['red_blue', 'blue', 'green', 'yellow_blue', 'gray'];
+// Horse.getMarkings() ordinal 1..4 对应的 overlay 纹理。
+const HORSE_MARKINGS = [
+  'horse_markings_white',
+  'horse_markings_whitefield',
+  'horse_markings_whitedots',
+  'horse_markings_blackdots',
+];
+// 条件装备层：condition → 纹理。horse variantBits 24=鞍，25..27=铠甲材质。
+const HORSE_EQUIPMENT = [
+  ['horse_saddle', 'entity/equipment/horse_saddle/saddle'],
+  ['horse_armor_1', 'entity/equipment/horse_body/leather'],
+  ['horse_armor_2', 'entity/equipment/horse_body/copper'],
+  ['horse_armor_3', 'entity/equipment/horse_body/iron'],
+  ['horse_armor_4', 'entity/equipment/horse_body/gold'],
+  ['horse_armor_5', 'entity/equipment/horse_body/diamond'],
+  ['horse_armor_6', 'entity/equipment/horse_body/netherite'],
+];
+// 与 WorldSampler 的人形护甲材质 id 保持一致。turtle_scute 只有头盔。
+const ARMOR_MATERIALS = [
+  [1, 'leather'], [2, 'chainmail'], [3, 'iron'], [4, 'gold'],
+  [5, 'diamond'], [6, 'netherite'], [7, 'turtle_scute'],
+];
+
+function armorSlotCondition(name, material) {
+  if (name === 'head') return `armor_head_${material}`;
+  if (name === 'body' || name === 'right_arm' || name === 'left_arm') return `armor_chest_${material}`;
+  if (name === 'right_leg' || name === 'left_leg') return `armor_feet_${material}`;
+  return null;
+}
+
+function armorLeggingsCondition(name, material) {
+  if (name === 'body' || name === 'right_leg' || name === 'left_leg') return `armor_legs_${material}`;
+  return null;
+}
+
+function armorOverlayTint(name) {
+  if (name === 'head') return 'leather_head';
+  if (name === 'body' || name === 'right_arm' || name === 'left_arm') return 'leather_chest';
+  return 'leather_feet';
+}
+
+function armorLeggingsOverlayTint() {
+  return 'leather_legs';
+}
+const SADDLE_OVERLAYS = {
+  camel: 'entity/equipment/camel_saddle/saddle',
+  donkey: 'entity/equipment/donkey_saddle/saddle',
+  mule: 'entity/equipment/donkey_saddle/saddle',
+};
+const VILLAGER_TYPES = ['desert', 'jungle', 'plains', 'savanna', 'snow', 'swamp', 'taiga'];
+const VILLAGER_PROFESSIONS = [
+  'armorer', 'butcher', 'cartographer', 'cleric', 'farmer', 'fisherman', 'fletcher',
+  'leatherworker', 'librarian', 'mason', 'nitwit', 'shepherd', 'toolsmith', 'weaponsmith',
+];
+const VILLAGER_LEVELS = ['stone', 'iron', 'gold', 'emerald', 'diamond'];
+const FOX_VARIANTS = [
+  'entity/fox/fox', 'entity/fox/snow_fox',
+  'entity/fox/fox_sleep', 'entity/fox/snow_fox_sleep',
+];
+const MOOSHROOM_VARIANTS = ['entity/cow/red_mooshroom', 'entity/cow/brown_mooshroom'];
+const RABBIT_VARIANTS = [
+  'brown', 'white', 'black', 'gold', 'salt', 'white_splotched', 'caerbannog', 'toast',
+];
+const LLAMA_VARIANTS = ['creamy', 'white', 'brown', 'gray'];
+const LLAMA_SWAGS = [
+  'white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray',
+  'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black',
+  'trader_llama',
+];
+const AXOLOTL_VARIANTS = ['lucy', 'wild', 'gold', 'cyan', 'blue'];
+const PANDA_VARIANTS = [
+  'panda', 'lazy_panda', 'worried_panda', 'playful_panda',
+  'brown_panda', 'weak_panda', 'aggressive_panda',
+];
+const SHULKER_COLORS = [
+  'white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray',
+  'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black',
+];
+const FROG_VARIANTS = ['temperate_frog', 'warm_frog', 'cold_frog'];
+
+function wolfTexture(variant, state) {
+  const base = variant === 'pale'
+    ? `minecraft:textures/entity/wolf/wolf${state ? '_' + state : ''}.png`
+    : `minecraft:textures/entity/wolf/wolf_${variant}${state ? '_' + state : ''}.png`;
+  return base;
+}
+
+function variantTexturesFor(idPath) {
+  if (idPath === 'cat') {
+    return CAT_VARIANTS.map(name => `minecraft:textures/entity/cat/${name}.png`);
+  }
+  if (idPath === 'wolf') {
+    const out = [];
+    for (const name of WOLF_VARIANTS) {
+      out.push(wolfTexture(name, ''), wolfTexture(name, 'tame'), wolfTexture(name, 'angry'));
+    }
+    return out;
+  }
+  if (idPath === 'horse') {
+    return HORSE_VARIANTS.map(name => `minecraft:textures/entity/horse/horse_${name}.png`);
+  }
+  if (idPath === 'parrot') {
+    return PARROT_VARIANTS.map(name => `minecraft:textures/entity/parrot/parrot_${name}.png`);
+  }
+  if (idPath === 'fox') {
+    return FOX_VARIANTS.map(path => `minecraft:textures/${path}.png`);
+  }
+  if (idPath === 'mooshroom') {
+    return MOOSHROOM_VARIANTS.map(path => `minecraft:textures/${path}.png`);
+  }
+  if (idPath === 'rabbit') {
+    return RABBIT_VARIANTS.map(name => `minecraft:textures/entity/rabbit/${name}.png`);
+  }
+  if (idPath === 'llama') {
+    return LLAMA_VARIANTS.map(name => `minecraft:textures/entity/llama/${name}.png`);
+  }
+  if (idPath === 'axolotl') {
+    return AXOLOTL_VARIANTS.map(name => `minecraft:textures/entity/axolotl/axolotl_${name}.png`);
+  }
+  if (idPath === 'panda') {
+    return PANDA_VARIANTS.map(name => `minecraft:textures/entity/panda/${name}.png`);
+  }
+  if (idPath === 'shulker') {
+    return SHULKER_COLORS.map(name => `minecraft:textures/entity/shulker/shulker_${name}.png`);
+  }
+  if (idPath === 'frog') {
+    return FROG_VARIANTS.map(name => `minecraft:textures/entity/frog/${name}.png`);
+  }
+  if (idPath === 'tropical_fish') {
+    return ['a', 'b'].map(shape => `minecraft:textures/entity/fish/tropical_${shape}.png`);
+  }
+  return null;
+}
 
 const models = {};
 for (const file of metaFiles) {
@@ -129,16 +288,200 @@ for (const file of metaFiles) {
     continue;
   }
   const base = bakeGeometry(baseGeo, meta.base.texture, '#0');
+  const pivots = { ...base.pivots };
+  if (idPath === 'tropical_fish') {
+    for (const part of base.parts) part.tint = 'tropical_base';
+  }
   const layers = [];
   for (const layer of meta.layers || []) {
     const layerGeo = geoFiles.get(`${idPath}_${layer.name}`);
     if (!layerGeo) continue;
     const baked = bakeGeometry(layerGeo, layer.texture, layer.texture);
+    Object.assign(pivots, baked.pivots);
     if (baked.parts.length) {
+      const overlay = layerOverlay(layer.name);
       layers.push({
         name: layer.name,
         texture: layer.texture,
         texture_size: baked.texture_size,
+        tint: overlay.tint,
+        condition: overlay.condition,
+        parts: baked.parts,
+      });
+    }
+  }
+  // Horse markings 是 base horse geometry + marking texture 的条件 overlay。
+  if (idPath === 'horse') {
+    HORSE_MARKINGS.forEach((file, i) => {
+      const texture = `minecraft:textures/entity/horse/${file}.png`;
+      const baked = bakeGeometry(baseGeo, texture, texture);
+      Object.assign(pivots, baked.pivots);
+      layers.push({
+        name: `HorseMarkings_${i + 1}`,
+        texture,
+        texture_size: baked.texture_size,
+        tint: null,
+        condition: `horse_marking_${i + 1}`,
+        parts: baked.parts,
+      });
+    });
+    HORSE_EQUIPMENT.forEach(([condition, path]) => {
+      const texture = `minecraft:textures/${path}.png`;
+      const baked = bakeGeometry(baseGeo, texture, texture);
+      Object.assign(pivots, baked.pivots);
+      layers.push({
+        name: condition,
+        texture,
+        texture_size: baked.texture_size,
+        tint: null,
+        condition,
+        parts: baked.parts,
+      });
+    });
+  }
+  if (SADDLE_OVERLAYS[idPath]) {
+    const texture = `minecraft:textures/${SADDLE_OVERLAYS[idPath]}.png`;
+    const baked = bakeGeometry(baseGeo, texture, texture);
+    Object.assign(pivots, baked.pivots);
+    layers.push({
+      name: 'Saddle',
+      texture,
+      texture_size: baked.texture_size,
+      tint: null,
+      condition: 'saddled',
+      parts: baked.parts,
+    });
+  }
+  if (idPath === 'tropical_fish') {
+    for (const shape of [0, 1]) {
+      for (let pattern = 0; pattern < 6; pattern++) {
+        const texture = `minecraft:textures/entity/fish/tropical_${shape === 0 ? 'a' : 'b'}_pattern_${pattern + 1}.png`;
+        const baked = bakeGeometry(baseGeo, texture, texture);
+        Object.assign(pivots, baked.pivots);
+        layers.push({
+          name: `TropicalPattern_${shape}_${pattern}`,
+          texture,
+          texture_size: baked.texture_size,
+          tint: 'tropical_pattern',
+          condition: `tropical_pattern_${shape}_${pattern}`,
+          parts: baked.parts,
+        });
+      }
+    }
+  }
+  if (idPath === 'llama') {
+    LLAMA_SWAGS.forEach((name, i) => {
+      const texture = `minecraft:textures/entity/equipment/llama_body/${name}.png`;
+      const baked = bakeGeometry(baseGeo, texture, texture);
+      Object.assign(pivots, baked.pivots);
+      layers.push({
+        name: `LlamaSwag_${i + 1}`,
+        texture,
+        texture_size: baked.texture_size,
+        tint: null,
+        condition: `llama_swag_${i + 1}`,
+        parts: baked.parts,
+      });
+    });
+  }
+  if (idPath === 'villager' || idPath === 'zombie_villager') {
+    const addOverlay = (name, path, condition) => {
+      const texture = `minecraft:textures/${path}.png`;
+      const baked = bakeGeometry(baseGeo, texture, texture);
+      Object.assign(pivots, baked.pivots);
+      layers.push({ name, texture, texture_size: baked.texture_size, tint: null, condition, parts: baked.parts });
+    };
+    VILLAGER_TYPES.forEach((type, i) => addOverlay(`Type_${type}`, `entity/${idPath}/type/${type}`, `villager_type_${i + 1}`));
+    VILLAGER_PROFESSIONS.forEach((prof, i) => addOverlay(`Profession_${prof}`, `entity/${idPath}/profession/${prof}`, `villager_profession_${i + 1}`));
+    VILLAGER_LEVELS.forEach((level, i) => addOverlay(`Level_${level}`, `entity/${idPath}/profession_level/${level}`, `villager_level_${i + 1}`));
+  }
+  if (idPath === 'player' || idPath === 'player_slim') {
+    const armorKey = idPath === 'player' ? 'player_armor' : 'player_slim_armor';
+    const armorGeo = geoFiles.get(armorKey);
+    const leggingsGeo = geoFiles.get(`${armorKey}_leggings`) || armorGeo;
+    if (armorGeo) {
+      for (const [material, name] of ARMOR_MATERIALS) {        const humanoidTexture = `minecraft:textures/entity/equipment/humanoid/${name}.png`;
+        const humanoid = bakeGeometry(armorGeo, humanoidTexture, humanoidTexture);
+        Object.assign(pivots, humanoid.pivots);
+        const humanoidParts = humanoid.parts
+          .map(part => ({ ...part, condition: armorSlotCondition(part.name, material) }))
+          .filter(part => part.condition && (name !== 'turtle_scute' || part.name === 'head'));
+        if (humanoidParts.length) {
+          layers.push({
+            name: `ArmorHumanoid_${name}`,
+            texture: humanoidTexture,
+            texture_size: humanoid.texture_size,
+            tint: null,
+            condition: null,
+            parts: humanoidParts,
+          });
+        }
+        if (name === 'leather') {
+          const overlayTexture = 'minecraft:textures/entity/equipment/humanoid/leather_overlay.png';
+          const overlay = bakeGeometry(armorGeo, overlayTexture, overlayTexture);
+          layers.push({
+            name: 'ArmorHumanoid_leather_overlay',
+            texture: overlayTexture,
+            texture_size: overlay.texture_size,
+            tint: null,
+            condition: null,
+            parts: overlay.parts
+              .map(part => ({
+                ...part,
+                condition: armorSlotCondition(part.name, material),
+                tint: armorOverlayTint(part.name),
+              }))
+              .filter(part => part.condition),
+          });
+        }
+        if (name === 'turtle_scute') continue;
+        const leggingsTexture = `minecraft:textures/entity/equipment/humanoid_leggings/${name}.png`;
+        const leggings = bakeGeometry(leggingsGeo, leggingsTexture, leggingsTexture);
+        Object.assign(pivots, leggings.pivots);
+        const leggingsParts = leggings.parts
+          .map(part => ({ ...part, condition: armorLeggingsCondition(part.name, material) }))
+          .filter(part => part.condition);
+        if (leggingsParts.length) {
+          layers.push({
+            name: `ArmorLeggings_${name}`,
+            texture: leggingsTexture,
+            texture_size: leggings.texture_size,
+            tint: null,
+            condition: null,
+            parts: leggingsParts,
+          });
+        }
+        if (name === 'leather') {
+          const overlayTexture = 'minecraft:textures/entity/equipment/humanoid_leggings/leather_overlay.png';
+          const overlay = bakeGeometry(leggingsGeo, overlayTexture, overlayTexture);
+          layers.push({
+            name: 'ArmorLeggings_leather_overlay',
+            texture: overlayTexture,
+            texture_size: overlay.texture_size,
+            tint: null,
+            condition: null,
+            parts: overlay.parts
+              .map(part => ({
+                ...part,
+                condition: armorLeggingsCondition(part.name, material),
+                tint: armorLeggingsOverlayTint(part.name),
+              }))
+              .filter(part => part.condition),
+          });
+        }
+      }
+    }
+    const elytraGeo = geoFiles.get('player_elytra');
+    if (elytraGeo) {
+      const texture = 'minecraft:textures/entity/equipment/wings/elytra.png';
+      const baked = bakeGeometry(elytraGeo, texture, texture);
+      Object.assign(pivots, baked.pivots);
+      layers.push({
+        name: 'Elytra',
+        texture,
+        texture_size: baked.texture_size,
+        tint: null,
+        condition: 'armor_chest_8',
         parts: baked.parts,
       });
     }
@@ -147,7 +490,9 @@ for (const file of metaFiles) {
     format_version: 'generated-wgd-2',
     texture_size: base.texture_size,
     textures: { 0: meta.base.texture },
+    variantTextures: variantTexturesFor(idPath),
     parts: base.parts,
+    pivots,
     layers,
   };
 }

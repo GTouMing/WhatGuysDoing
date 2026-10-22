@@ -1,0 +1,32 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.what_guys_doing.player_cape",
+        "texture_width": 64,
+        "texture_height": 32
+      },
+      "bones": [
+        {
+          "name": "cape",
+          "pivot": [0, 24, 2],
+          "cubes": [
+            {
+              "origin": [-5, 8, 2],
+              "size": [10, 16, 1],
+              "uv": {
+                "north": { "uv": [0, 0], "uv_size": [10, 16] },
+                "south": { "uv": [10, 0], "uv_size": [10, 16] },
+                "west": { "uv": [0, 16], "uv_size": [1, 16] },
+                "east": { "uv": [11, 16], "uv_size": [1, 16] },
+                "up": { "uv": [10, 16], "uv_size": [10, 1] },
+                "down": { "uv": [10, 17], "uv_size": [10, 1] }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
