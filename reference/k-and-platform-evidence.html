@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="K、R/B 条件性包络与固定平台证据的打印速查卡。">
+  <title>速查卡：K 与固定平台证据</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<main>
+  <nav aria-label="教学导航">
+    <a href="../lessons/0001-k-and-platform-evidence.html#k">回到短课</a>
+    <a href="../lessons/0001-k-and-platform-evidence.html#practice">判断练习</a>
+    <a href="../RESOURCES.md">资料与缺口</a>
+  </nav>
+  <header>
+    <p class="kicker">证据审查 · 打印速查卡</p>
+    <h1>K 与固定平台依据</h1>
+    <p class="lead">先问“证据支持哪个断言”，再问“是否可以放行”。</p>
+  </header>
+
+  <section id="boundaries">
+    <h2>三个记号，一条条件性结论</h2>
+    <ul>
+      <li><strong>K：</strong>一次通道写调用所见的所有缓冲区 <code>remaining()</code> 总上限，包含 HTTP／WebSocket 协议头。</li>
+      <li><strong>R：</strong>已校验限制直接发布，立即拒绝相关新认证和新输出生产。</li>
+      <li><strong>B：</strong>输出所有者处理匹配限制，撤销相关后续写资格、丢应用后缀并回执。</li>
+    </ul>
+    <p class="formula">检查通过 → R → 全站唯一一次此前获准的写（总输入 ≤ K）→ 返回 → B<br>此后受影响项不再写；其他仍有资格的输出才可继续。</p>
+    <p>上述包络须同时有：全入口唯一输出所有权、限制状态可见、一次检查只批准一次写、返回后先处理限制，以及固定实现没有隐蔽后台提交。<a href="../docs/observation-send-barrier-engineering.md#L125-L132">[项目推导]</a></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">K 限制什么</th><th scope="col">K 不限制什么</th></tr></thead>
+        <tbody>
+          <tr><td>一次调用暴露的总待写字节；在上述前提下，R→B 的新增残余提交至多 K。</td><td>整条消息大小、保留内存、调用完成毫秒数、R 前已交 OS 的字节，以及浏览器接收或应用结果。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">正常返回 n：0 ≤ n ≤ 本次输入总量，只推进 n；可能为 0。异常没有可用的正常 n，本项目按本次 [0,K] 未知提交、不重放。B 不是保存或真实退出证明。<a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/WritableByteChannel.html#write(java.nio.ByteBuffer)">[正常返回契约]</a> <a href="../docs/adr/0010-single-owner-send-barrier.md#L7-L11">[项目异常与保存政策]</a></p>
+  </section>
+
+  <section id="checklist">
+    <h2>报告审查的四个问题</h2>
+    <ol>
+      <li><strong>到底在哪里测？</strong>确切 JDK 发行者／完整 build／可信构件与指纹，OS／内核／架构，实际 NIO provider、通道模式和相关包装层；不要只有“Java 21”。</li>
+      <li><strong>依赖哪个行为保证？</strong>输入及返回、后台提交和关闭契约如何对应这一实现？“非阻塞”不自动承诺硬毫秒上界。</li>
+      <li><strong>谁证明产品结构？</strong>HTTP、升级、数据／控制帧、旧任务等全入口无旁路，限制发布和逐次检查顺序成立；独立夹具不替代产品证明。</li>
+      <li><strong>实测覆盖什么？</strong>明确负载与用例下的 CPU、吞吐、延迟、零写／部分写、R/B 轨迹和实际退出；报告未执行项，不能把有限测量外推为所有情况保证。</li>
+    </ol>
+    <p class="small">来源：<a href="../docs/observation-verification-v2.md#L50-L59">固定环境元组</a>、<a href="../docs/observation-verification-v2.md#L107-L113">V2-3 的证据与限制</a>。这是待批准草案，不是执行许可。</p>
+    <p class="formula">在【确切环境】支持【具体断言】；未证明【剩余义务】；下一步补【对应证据】。</p>
+    <p class="small">K 更小，允许的残余字节更少，同流量理想足额调用数更多；真实开销需要测量。4／16／64 KiB 仍只是<a href="../docs/observation-send-barrier-engineering.md#L191-L197">算例</a>，不推荐其中某个值。</p>
+  </section>
+
+  <section id="sources">
+    <h2>主读资料与复习入口</h2>
+    <p><a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/WritableByteChannel.html#write(java.nio.ByteBuffer)">Java SE 21：WritableByteChannel.write</a>——输入 r、正常返回 n 与零写；<a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/GatheringByteChannel.html">GatheringByteChannel</a>——多个缓冲区合计；<a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/spi/SelectorProvider.html">SelectorProvider</a>——具体实现提供者。</p>
+    <p>下次不看资料先回答：“两个缓冲区分别没超 K，为什么合在一次写里仍可能违规？”再回到<a href="../lessons/0001-k-and-platform-evidence.html#practice">三题练习</a>。不理解的地方，直接向 agent 提问。</p>
+  </section>
+  <footer>
+    <p>教学材料，不选择 K，不批准实施／实验／开通，也不测定当前机器。沿用项目工程记号；不修改已有产品术语。</p>
+  </footer>
+</main>
+</body>
+</html>

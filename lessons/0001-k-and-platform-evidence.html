@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="用三个判断题学习审查 K 与固定平台证据；不运行网络实验。">
+  <title>第 01 课：K 与固定平台证据</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+  <script src="../assets/quiz.js" defer></script>
+</head>
+<body>
+<main>
+  <nav aria-label="教学导航">
+    <a href="../MISSION.md">学习使命</a>
+    <a href="../reference/k-and-platform-evidence.html#checklist">速查卡</a>
+    <a href="../RESOURCES.md">资料与证据缺口</a>
+    <a href="#practice">直接练习</a>
+  </nav>
+  <header>
+    <p class="kicker">第 01 课 · 审查证据，而不是凭印象放行</p>
+    <h1>K 与固定平台依据是什么？</h1>
+    <p class="lead">学完后，要能说清：<strong>“这份证据支持什么，还不能推出什么。”</strong></p>
+    <p class="meta">与 WhatGuysDoing 的开工门槛绑定。K、R、B 是工程推演记号，不是新增产品术语。</p>
+  </header>
+
+  <aside class="callout warning" aria-label="教学边界">
+    <p>本课所有数值例子都是教学算例，不选择 K。已选政策、官方契约、程序证明和测量结果是不同层次；阅读与练习不批准实施、V2 实验或生产开通。</p>
+  </aside>
+
+  <section id="k">
+    <h2>1．K 限制的是一次写调用的输入</h2>
+    <p>程序准备一段字节，请底层网络通道写出去。<strong>K 是这一次调用最多能看见多少待写字节</strong>：一个缓冲区看它的 <code>remaining()</code>；多个缓冲区一起写，就合计这些缓冲区的 <code>remaining()</code>。协议头也在里面。<a href="../docs/observation-send-barrier-engineering.md#L118-L132">[项目定义与条件]</a></p>
+    <p class="formula">r = 本次传入的所有缓冲区的 remaining 总和 ≤ K<br>正常返回时：0 ≤ n ≤ r，其中 n 是本次报告写入的字节数。</p>
+    <p>例如，K = 16 KiB = 16,384 B，头占 100 B，本次正文片段最多 16,284 B。写调用可能返回 6,000，也可能返回 0；不能因为调用过一次，就把整条消息当作已写完。<a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/WritableByteChannel.html#write(java.nio.ByteBuffer)">[Java 官方：单缓冲区写]</a> <a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/GatheringByteChannel.html">[多缓冲区写]</a></p>
+    <p>总协议字节为 100 KiB 的消息可以跨多次调用写；在上述 K 下，即使理想地足额写，也至少需要 7 次。<strong>切成小片不代表原来的大数组已经释放</strong>，因此 K 不是消息大小或内存上限。<a href="../docs/observation-send-barrier-engineering.md#L136-L141">[不能推出的结论]</a></p>
+    <p class="small">如果调用抛异常，没有可用的正常返回 n。本项目保守按本次 [0,K] 的未知提交处理，禁止重放；不能把“没有返回数值”当作“写入了 0 字节”。这是<a href="../docs/adr/0010-single-owner-send-barrier.md#L7-L11">项目已选异常政策</a>，不是浏览器已收到多少的测量。</p>
+  </section>
+
+  <section id="barrier">
+    <h2>2．为什么撤销后还可能新提交至多 K？</h2>
+    <p>撤销请求不能把另一个已经获准的底层调用倒回去。本项目选择了下面的最坏交错：</p>
+    <ol class="timeline" aria-label="限制与一次残余写的时序">
+      <li><strong>检查通过</strong>唯一输出所有者批准一次写。</li>
+      <li><strong>发布限制 R</strong>立即拒绝相关新认证和新输出生产。</li>
+      <li><strong>此前获准的写</strong>这唯一一次调用可返回，输入 ≤ K。</li>
+      <li><strong>建立屏障 B</strong>处理匹配限制、弃后缀，下一次写前生效。</li>
+    </ol>
+    <p><strong>“全站一次”依赖程序结构：</strong>所有输出确实归一个所有者；限制直接发布且可见；一次检查只批准一次写；返回后先处理限制；没有库或旧路径偷偷继续写。若两个写者各获准一次，就可能放大成 2×K；接口对同一通道写的互斥也不等于全站唯一写者。<a href="../docs/observation-send-barrier-engineering.md#L125-L132">[证明前提]</a> <a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/WritableByteChannel.html">[接口互斥的范围]</a></p>
+    <div class="callout">
+      <p>这里限制的是 <strong>R→B 期间新增提交的字节</strong>。R 前已交给操作系统、之后才到浏览器的旧字节不受 K 限制，也不承诺收回。K 不给出“必定在 1 毫秒内停止”的保证。<a href="../docs/observation-send-barrier-engineering.md#L132-L141">[范围与时间边界]</a></p>
+    </div>
+    <p class="small">B 也不是“管理成功”：必须先有匹配 B 回执，才开始该安全状态可靠保存；之后还需旧登录、必要引用及连接/所有者实际收束的匹配证据。<a href="../docs/adr/0010-single-owner-send-barrier.md#L9-L11">[已选顺序]</a></p>
+  </section>
+
+  <section id="platform">
+    <h2>3．固定平台依据不是一行“Java 21”</h2>
+    <p>Java API 说明接口承诺什么；实际 NIO 提供者（provider）是执行这些通道操作的具体实现。官方允许使用不同提供者，因此只认 API 名称，不能认定目标实现已经核对。<a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/spi/SelectorProvider.html">[Java 官方：实现提供者]</a></p>
+    <p><strong>“固定”是为了明确证据适用范围，不是说某个平台天然安全。</strong>报告必须能回答“哪一套环境、哪一份程序、在哪些用例下”；相关 JDK、provider 或包装层变化后，重新评估受影响结论，不能拿 A 环境的一次成功直接担保 B 环境。<a href="../docs/observation-verification-v2.md#L50-L59">[环境身份要求]</a> <a href="../docs/observation-verification-v2.md#L107-L113">[测量与适用边界]</a></p>
+    <div class="table-wrap">
+      <table>
+        <caption>读报告时，找四类不同的依据，而不是一个“通过”标签。</caption>
+        <thead><tr><th scope="col">依据</th><th scope="col">要看什么</th><th scope="col">不能替代什么</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">环境身份</th><td>JDK 发行者、完整 build、可信构件与指纹；OS/内核、架构、实际 provider、通道模式及相关包装层。</td><td>有这些名称，不代表行为已证明。</td></tr>
+          <tr><th scope="row">契约与实现对应</th><td>所依赖的输入/返回、后台提交、关闭行为，在这一实现里如何成立；若增加 TLS 或其他缓冲层，重新核定边界。</td><td>不能只用“非阻塞”推导硬毫秒上界。</td></tr>
+          <tr><th scope="row">程序证明</th><td>HTTP、升级、数据/控制帧等全入口唯一输出；检查与限制发布/重读顺序；单次完整输入合计 ≤ K。</td><td>官方文档和独立夹具不能证明产品已完成迁移。</td></tr>
+          <tr><th scope="row">实际测量</th><td>在明确环境、负载与用例下，记录 CPU、吞吐、延迟、零写/部分写、R/B 轨迹及实际退出。</td><td>有限样本不证明所有场景都满足硬时限。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small">来源：<a href="../docs/observation-verification-v2.md#L50-L59">固定环境元组</a>、<a href="../docs/observation-verification-v2.md#L107-L113">V2-3 的断言和适用范围</a>、<a href="../docs/observation-send-barrier-engineering.md#L125-L141">条件性推导</a>。这些资料仍把目标事实标为待核定；本课没有测定你的电脑或目标服务器。</p>
+    <p>较小 K 允许的残余字节更少，但按理想足额写完成同样流量需要更多调用；真实 CPU、吞吐和延迟必须测量。当前 4/16/64 KiB 只是<a href="../docs/observation-send-barrier-engineering.md#L191-L197">算例</a>，不是推荐值。<strong>先形成证据，再做安全—性能取舍。</strong></p>
+  </section>
+
+  <section id="review">
+    <h2>4．用一句话审查报告</h2>
+    <p class="formula">这份证据在【确切环境】支持【具体断言】；尚未证明【剩余义务】；因此下一步需要【对应证据】，而不是直接开通。</p>
+    <p>教学虚构报告：“Java 21、Ubuntu，K=16 KiB，回环试验未报错，所以生产撤销必定在 1 毫秒内完成。”</p>
+    <p>合理评价：版本与平台身份尚不完整；“未报错”至多描述该次用例，没有证明产品全入口所有权、硬退出或任意负载下的硬时限。应补确切环境、所依赖契约、产品证明及对应测量，不把一次成功扩大成普遍保证。</p>
+  </section>
+
+  <section id="practice">
+    <h2>5．三题练习：先判断，再看反馈</h2>
+    <p class="small">题目只做本地学习反馈，不访问网络、不保存答案、不发起项目操作。做完后仍要用自己的话复述，答对选项不自动记为掌握。</p>
+    <noscript><p>当前脚本未启用；可口头回答，再查<a href="../reference/k-and-platform-evidence.html#checklist">速查卡</a>或把答案发给老师。</p></noscript>
+
+    <fieldset data-quiz data-answer="b">
+      <legend>题 1：K=4,096 B，一次多缓冲区写传入 100 B 头和 4,000 B 正文。怎么判断？</legend>
+      <label class="choice"><input type="radio" name="q1" value="a"><span>只算正文即可写入</span></label>
+      <label class="choice"><input type="radio" name="q1" value="b"><span>合计超限必须缩小</span></label>
+      <label class="choice"><input type="radio" name="q1" value="c"><span>分成两块即可写入</span></label>
+      <button type="button" data-check>检查判断</button>
+      <p class="feedback" data-feedback role="status" aria-live="polite" aria-atomic="true"></p>
+      <p data-solution hidden>合计是 4,100 B，超过 K。必须缩小本次暴露的总输入；在同一次调用里拆成两个缓冲区，不能绕过合计上限。</p>
+    </fieldset>
+
+    <fieldset data-quiz data-answer="c">
+      <legend>题 2：唯一所有权、限制可见性和逐次检查等前提均成立。K 给出的安全结论是哪类？</legend>
+      <label class="choice"><input type="radio" name="q2" value="a"><span>保证一毫秒内终止</span></label>
+      <label class="choice"><input type="radio" name="q2" value="b"><span>保证旧数据都撤回</span></label>
+      <label class="choice"><input type="radio" name="q2" value="c"><span>仅限新提交量上界</span></label>
+      <button type="button" data-check>检查判断</button>
+      <p class="feedback" data-feedback role="status" aria-live="polite" aria-atomic="true"></p>
+      <p data-solution hidden>这些前提给出 R→B 全站至多一次、输入至多 K 的条件性包络。它不限制调度或调用完成毫秒数，也不收回 R 前已交操作系统的旧字节。</p>
+    </fieldset>
+
+    <fieldset data-quiz data-answer="a">
+      <legend>题 3：独立夹具在固定 build 上测到了目标吞吐，能否据此证明产品全入口已归唯一输出所有者？</legend>
+      <label class="choice"><input type="radio" name="q3" value="a"><span>夹具不替产品证明</span></label>
+      <label class="choice"><input type="radio" name="q3" value="b"><span>目标达标即可开通</span></label>
+      <label class="choice"><input type="radio" name="q3" value="c"><span>同用接口即可外推</span></label>
+      <button type="button" data-check>检查判断</button>
+      <p class="feedback" data-feedback role="status" aria-live="polite" aria-atomic="true"></p>
+      <p data-solution hidden>夹具测量只支持其明确环境与用例下的结果。产品的全部写入路径、旧任务、关闭及控制帧还需单独证明；吞吐测量也不替代完整验收或开通许可。</p>
+    </fieldset>
+  </section>
+
+  <section id="read-next">
+    <h2>6．只读一份主资料</h2>
+    <p>推荐 <a href="https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/channels/WritableByteChannel.html#write(java.nio.ByteBuffer)">Java SE 21 的 WritableByteChannel.write 官方契约</a>。只读 Method Details 中的 write：找出输入 r、返回 n，以及“possibly zero”三个位置，再说清它为什么没有承诺浏览器应用成功或一个固定停止毫秒数。</p>
+    <p>下次复习先不看资料，用一句话解释“头也计 K，但 K 不计整条消息的内存上限”。然后再对照<a href="../reference/k-and-platform-evidence.html#boundaries">速查卡</a>；不自动安排提醒。</p>
+  </section>
+
+  <footer>
+    <p>有任何不清楚的地方，直接向 agent 提问；也可发你的三题答案或一段验证报告，让老师逐项反馈。尚未收到理解证据，因此没有把本课写成“已经掌握”的学习记录。</p>
+    <p><a href="../reference/k-and-platform-evidence.html#sources">打印与复习用的速查卡</a> · <a href="../RESOURCES.md">完整来源及未关闭证据门</a></p>
+  </footer>
+</main>
+</body>
+</html>

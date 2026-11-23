@@ -1,0 +1,11 @@
+Exception in thread "main" java.io.IOException: Cannot run program "E:/Java/21/bin/java.exe" (in directory "E:\Projects\WhatGuysDoing\verification\observation-stage1\v1a-20261111-090437"): CreatePipe error=5, ¾Ü¾ø·ÃÎÊ¡£
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1170)
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1089)
+	at V1aStorageProbe.interruptPartial(V1aStorageProbe.java:113)
+	at V1aStorageProbe.main(V1aStorageProbe.java:26)
+Caused by: java.io.IOException: CreatePipe error=5, ¾Ü¾ø·ÃÎÊ¡£
+	at java.base/java.lang.ProcessImpl.create(Native Method)
+	at java.base/java.lang.ProcessImpl.<init>(ProcessImpl.java:506)
+	at java.base/java.lang.ProcessImpl.start(ProcessImpl.java:159)
+	at java.base/java.lang.ProcessBuilder.start(ProcessBuilder.java:1126)
+	... 3 more

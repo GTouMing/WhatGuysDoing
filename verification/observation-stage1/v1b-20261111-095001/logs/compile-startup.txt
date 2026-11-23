@@ -1,0 +1,7 @@
+E:\Projects\WhatGuysDoing\verification\observation-stage1\v1b-20261111-095001\src\V1bStartupProbe.java:100: 警告: [try] 不能在相应的 try 语句的正文中引用可自动结束的资源stdin
+                 OutputStream stdin = worker.getOutputStream();
+                              ^
+E:\Projects\WhatGuysDoing\verification\observation-stage1\v1b-20261111-095001\src\V1bStartupProbe.java:101: 警告: [try] 不能在相应的 try 语句的正文中引用可自动结束的资源stderr
+                 InputStream stderr = worker.getErrorStream()) {
+                             ^
+2 个警告

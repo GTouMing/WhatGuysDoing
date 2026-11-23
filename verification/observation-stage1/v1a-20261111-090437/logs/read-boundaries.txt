@@ -1,0 +1,4 @@
+PASS missing synthetic file raises NoSuchFileException
+OBSERVED truncated JSON remains readable as raw bytes; not a parser pass
+PASS malformed UTF-8 raises MalformedInputException
+PASS reading directory as file raises AccessDeniedException
