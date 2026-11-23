@@ -1,7 +1,7 @@
 // WhatGuysDoing M0 调试查看器：只验证数据通道（方块实例 + 实体标记），不是最终渲染器。
 // M1b 起新增烘焙路径：原版 blockstate/model → 几何模板 → 图集 → 每 section 网格。
 import { createBaker } from './baker.js';
-import { createMesher, stateIdAt, lightAt, MATERIAL_TRANSLUCENT } from './mesher.js';
+import { createMesher, stateIdAt, lightAt } from './mesher.js';
 import { buildAtlas, ALPHA_OPAQUE, assignTileSlots } from './atlas.js';
 import { tintFor } from './tint.js';
 import { MSG, C_SUBSCRIBE, C_PING, ENTITY_FLAG, Reader } from './protocol.js';
@@ -12,7 +12,9 @@ import { VERTEX_STRIDE, VERTEX_ATTRIBUTES, interleaveMesh } from './vertexformat
 import { entityPartsFor, entityTexturePaths } from './entitymodel.js';
 import { buildEntityAtlas } from './entityatlas.js';
 import { buildEntityMesh } from './entitymesh.js';
-import { buildEntityPartTemplates, buildEntityPartInstances } from './entityrender.js';
+import { buildEntityPartTemplates, buildEntityPartInstances, packEntityPartInstances } from './entityrender.js';
+import { createLowresRenderer } from './lowres.js';
+import { shouldSettleStreaming } from './streamgate.js';
 
 // 崩溃取证：把现场持续写进 localStorage，标签页崩掉后重开页面仍能读到上次的错误与心跳
 const diag = createDiag();
@@ -68,7 +70,20 @@ async function refreshEntityTypes() {
 }
 
 // 构建标记：HUD 上可见，用来确认浏览器跑的就是当前这份代码（排查"改了没变化"的第一件事）
-const BUILD_TAG = 'uv104';
+const BUILD_TAG = 'uv192';
+let globalLowresMode = false;
+let hybridLowresMode = false;
+let lowresDimension = 'overworld';
+const LOWRES_DIMENSIONS = ['overworld', 'the_nether', 'the_end'];
+const lowresActive = () => globalLowresMode || hybridLowresMode;
+
+function lowresDimensionId() {
+  for (const [id, dim] of state.dims) {
+    const name = dim.name.replace(/^minecraft:/, '');
+    if (name === lowresDimension) return id;
+  }
+  return -1;
+}
 
 const NEIGHBORS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 const FLOATS_PER_INSTANCE = 7;
@@ -122,6 +137,7 @@ const sectionKey = (dim, cx, cy, cz) => `${dim}:${cx}:${cy}:${cz}`;
 
 // ---------------------------------------------------------------- 消息处理
 function handleMessage(buffer) {
+  lastWsMessageAt = performance.now();
   state.bytesReceived += buffer.byteLength;
   const r = new Reader(buffer);
   const type = r.u8();
@@ -158,6 +174,10 @@ function handleMessage(buffer) {
       const section = { key, dim, cx, cy, cz, palette, bits, indices, blockLight, skyLight, biomes, ids: null, instances: null, count: 0 };
       state.sections.set(key, section);
       state.sectionVersion++;
+      if (streaming) {
+        lastSectionAt = performance.now();
+        streamSectionsSeen++;
+      }
       indexSection(section);
       state.dirty.add(key);
       // 邻居的存在会改变本段边界面的光照采样与遮挡判定：把**已经网格化过**的邻居标脏重网格。
@@ -414,6 +434,42 @@ function rebuildInstances(dirtyBudget) {
 const camera = createCamera({ x: 8, y: 80, z: 8, yaw: 200, pitch: -25, speed: 24 });
 const keys = new Set();
 let camInitialized = false;
+let lastWsMessageAt = 0;
+let lastFrameMs = 0;
+const CAMERA_STORAGE_KEY = 'wgd.camera.v2';
+
+function restoreCamera() {
+  try {
+    const raw = sessionStorage.getItem(CAMERA_STORAGE_KEY);
+    if (!raw) return;
+    const c = JSON.parse(raw);
+    if (![c.x, c.y, c.z, c.yaw, c.pitch].every(Number.isFinite)) return;
+    camera.x = c.x;
+    camera.y = c.y;
+    camera.z = c.z;
+    camera.yaw = c.yaw;
+    camera.pitch = c.pitch;
+    if (Number.isFinite(c.speed)) camera.speed = c.speed;
+    camInitialized = true;
+  } catch {
+    // 隐私模式/禁用 storage 时退回 spawn
+  }
+}
+
+function saveCamera() {
+  try {
+    sessionStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify({
+      x: camera.x, y: camera.y, z: camera.z,
+      yaw: camera.yaw, pitch: camera.pitch, speed: camera.speed,
+    }));
+  } catch {
+    // 忽略 storage 不可用
+  }
+}
+
+restoreCamera();
+window.addEventListener('pagehide', saveCamera);
+window.addEventListener('beforeunload', saveCamera);
 
 // ---------------------------------------------------------------- WebGPU
 const CUBE = (() => {
@@ -455,7 +511,7 @@ fn fs(in: VSOut) -> @location(0) vec4f {
 }
 `;
 
-const gpu = { device: null, context: null, pipeline: null, uniform: null, bind: null, cube: null, instances: null, capacity: 0, depth: null, format: null, uniformData: new Float32Array(16) };
+const gpu = { device: null, context: null, pipeline: null, uniform: null, bind: null, cube: null, instances: null, capacity: 0, depth: null, format: null, uniformData: new Float32Array(16), lowres: null };
 
 async function initWebGPU() {
   if (!navigator.gpu) throw new Error('此浏览器不支持 WebGPU');
@@ -519,9 +575,10 @@ async function initWebGPU() {
     layout: gpu.pipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: gpu.uniform } }],
   });
+  gpu.lowres = createLowresRenderer(gpu.device, gpu.format);
   gpu.cube = gpu.device.createBuffer({ size: CUBE.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   gpu.device.queue.writeBuffer(gpu.cube, 0, CUBE);
-  rebuildPoolBuffers();   // 共享顶点/索引池：每帧状态切换 5 次而不是每段 5 次
+  rebuildPoolBuffers('init');   // 共享顶点/索引池：每帧状态切换 5 次而不是每段 5 次
 }
 
 function ensureInstanceBuffer(count) {
@@ -545,18 +602,30 @@ function frame() {
     gpu.depth = gpu.device.createTexture({ size: [w, h], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
   }
 
-  rebuildInstances(6);
-  ensureInstanceBuffer(Math.max(1, instanceCount));
-  if (instanceCount > 0) {
-    gpu.device.queue.writeBuffer(gpu.instances, 0, instanceData, 0, instanceCount * FLOATS_PER_INSTANCE);
+  if (globalLowresMode) {
+    instanceCount = 0;
+  } else {
+    rebuildInstances(6);
+    ensureInstanceBuffer(Math.max(1, instanceCount));
+    if (instanceCount > 0) {
+      gpu.device.queue.writeBuffer(gpu.instances, 0, instanceData, 0, instanceCount * FLOATS_PER_INSTANCE);
+    }
   }
-  const vp = buildViewProj(camera, w / h);
+  const vp = buildViewProj(camera, w / h, lowresActive() ? 60000 : 2000);
   gpu.uniformData.set(vp);
   gpu.device.queue.writeBuffer(gpu.uniform, 0, gpu.uniformData);
+  if (lowresActive() && gpu.lowres) {
+    frustumPlanes(frustum, gpu.uniformData);
+    const dimId = lowresDimensionId();
+    gpu.lowres.updateCoverage(camera, hybridLowresMode ? baked.sections : null, dimId);
+    gpu.lowres.setViewProj(vp, camera);
+    gpu.lowres.update(camera, frustum, lowresDimension, globalLowresMode ? 'global' : 'hybrid');
+  }
 
   // 注意：网格化会 createBuffer / writeBuffer，必须在 render pass 之外做
   // （在 pass 进行中写缓冲是 WebGPU 校验错误，会静默失败、画面空白且不抛异常）
-  if (baked.ready && baked.enabled) {
+  if (!globalLowresMode && baked.ready && baked.enabled) {
+    maybeSettleStreaming();
     // 首次铺满世界前没有 fps 可保护（此时页面还在用兜底方块实例渲染，本来就只有十几帧），
     // 所以放开预算：2016 段 × 5.4ms 按 6ms/帧摊是 ~30 秒，按 20ms/帧约 ~9 秒。
     meshDirtySections(firstCoverageDone ? 6 : 20);
@@ -567,35 +636,69 @@ function frame() {
   }
 
   const encoder = gpu.device.createCommandEncoder();
-  const pass = encoder.beginRenderPass({
-    colorAttachments: [{
-      view: gpu.context.getCurrentTexture().createView(),
-      clearValue: { r: 0.043, g: 0.051, b: 0.071, a: 1 },
-      loadOp: 'clear', storeOp: 'store',
-    }],
-    depthStencilAttachment: {
-      view: gpu.depth.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store',
-    },
-  });
-  if (baked.ready && baked.enabled) {
-    try {
-      drawBaked(pass);
-      drawEntities(pass);
-    } catch (e) {
-      baked.error = e && e.message ? e.message : String(e);
-      baked.enabled = false;
-      console.error('[WhatGuysDoing] 烘焙渲染失败，回退方块实例渲染：', e);
+  const colorView = gpu.context.getCurrentTexture().createView();
+  const clearColor = { r: 0.043, g: 0.051, b: 0.071, a: 1 };
+  const lowresDraw = lowresActive() && gpu.lowres;
+  if (lowresDraw) gpu.lowres.resetDrawStats();
+
+  // BlueMap 式 LOD：远→近逐层绘制，每层单独 pass 并 clear depth；
+  // 层间不再由 CPU 环带选择，重叠由 coverage/距离 fade 消除。
+  if (lowresDraw) {
+    for (let lod = 3; lod >= 1; lod--) {
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: colorView,
+          clearValue: clearColor,
+          loadOp: lod === 3 ? 'clear' : 'load',
+          storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: gpu.depth.createView(), depthClearValue: 1.0,
+          depthLoadOp: 'clear', depthStoreOp: 'store',
+        },
+      });
+      gpu.lowres.drawLod(pass, lod, frustum);
+      pass.end();
     }
   }
-  if (instanceCount > 0) {
-    // 烘焙路径下实例缓冲里只有实体标记；否则是地形实例 + 实体标记
-    pass.setPipeline(gpu.pipeline);
-    pass.setBindGroup(0, gpu.bind);
-    pass.setVertexBuffer(0, gpu.cube);
-    pass.setVertexBuffer(1, gpu.instances);
-    pass.draw(36, instanceCount);
+
+  // Hybrid / live：最后一层画 full-res 与实体。depth clear 避免 LOD1 遮挡
+  // 近处 full-res；颜色 load 保留远处 lowres 背景。
+  if (!globalLowresMode || !lowresDraw) {
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: colorView,
+        clearValue: clearColor,
+        loadOp: lowresDraw ? 'load' : 'clear',
+        storeOp: 'store',
+      }],
+      depthStencilAttachment: {
+        view: gpu.depth.createView(), depthClearValue: 1.0,
+        depthLoadOp: 'clear', depthStoreOp: 'store',
+      },
+    });
+    if (!globalLowresMode) {
+      if (baked.ready && baked.enabled) {
+        try {
+          drawBaked(pass);
+          drawEntities(pass);
+        } catch (e) {
+          baked.error = e && e.message ? e.message : String(e);
+          baked.enabled = false;
+          console.error('[WhatGuysDoing] 烘焙渲染失败，回退方块实例渲染：', e);
+        }
+      }
+      if (instanceCount > 0) {
+        // 烘焙路径下实例缓冲里只有实体标记；否则是地形实例 + 实体标记
+        pass.setPipeline(gpu.pipeline);
+        pass.setBindGroup(0, gpu.bind);
+        pass.setVertexBuffer(0, gpu.cube);
+        pass.setVertexBuffer(1, gpu.instances);
+        pass.draw(36, instanceCount);
+      }
+    }
+    pass.end();
   }
-  pass.end();
   gpu.device.queue.submit([encoder.finish()]);
 }
 
@@ -811,13 +914,20 @@ async function buildAndAttachAtlas() {
   const baker = baked.baker;
   // 槽位来自**持久顺序表**（只追加、跨重建不变）：槽位进了 uv，一旦重排，已建网格就会指到别的贴图。
   const paths = assignTileSlots(atlasOrder, baker.texturesUsed());
-  const atlas = await buildAtlas(gpu.device, paths.keys(), { fetchTexture: fetchTextureBitmap });
+  const atlas = await buildAtlas(gpu.device, paths.keys(), {
+    fetchTexture: fetchTextureBitmap,
+    // 1024×1024，4096 tiles：覆盖当前方块贴图集并留出资源包余量。
+    // 页面尺寸固定后，atlas 只追加槽位；重建不再让旧 mesh 的 uv 失效。
+    minCapacity: 4096,
+  });
   // 换图集就作废旧的"首个矩形"记录：否则诊断里会把上一代图集的矩形和这一代网格的 uv 混在一行，
   // 看起来自相矛盾（值会像旧公式的 8.0，而网格 uv 实际是合法的）。
   // 图集尺寸变化会让**所有**已建网格的 uv 失效（uv 按尺寸归一化）。容量已量化成台阶，
   // 所以只有跨台阶时才需要一次性全量重网格；其余重建都是非破坏性的（槽位只追加）。
   const previousAtlas = baked.atlas;
   const sizeChanged = previousAtlas && (previousAtlas.width !== atlas.width || previousAtlas.height !== atlas.height);
+  atlasRebuilds++;
+  atlasLastSizeChanged = !!sizeChanged;
   baked.atlas = atlas;
   atlasGeneration++;
   // 诊断随图集换代一起作废：下一次网格化会按当前图集重新记录，保证那一行永远自洽
@@ -908,19 +1018,28 @@ function queueAtlasBuild() {
 /** 出现图集里没有的贴图时（新方块类型）自动重建图集 */
 let descriptorBusy = false;
 let atlasRebuildTimer = null;
+let atlasRebuildPending = false;
+let atlasRebuildReason = '';
+let atlasRebuilds = 0;
+let atlasLastSizeChanged = false;
+let streamEpoch = 0;
+let streaming = false;
+let streamStartedAt = 0;
+let lastSectionAt = 0;
+let streamSectionsSeen = 0;
+let streamExpectedSections = 0;
 
-/**
- * 贴图引用变多后自动重建图集。
- *
- * 因为 `stableTileOrder` 保证"只追加、不挪位"，重建是**非破坏性**的：旧瓦片位置不变，
- * 已建网格的 uv 依然有效 —— 所以这里**不再把全部段标脏**（以前那样做，重建后要 10–30 秒才追平，
- * 期间旧网格指着新图集里移位后的瓦片，于是出现"草方块变钻石块"）。
- */
-function scheduleAtlasRebuild(reason) {
+function armAtlasRebuild(delayMs, reason) {
   if (atlasRebuildTimer) return;
   atlasRebuildTimer = setTimeout(async () => {
     atlasRebuildTimer = null;
     if (!baked.ready) return;
+    if (streaming) {
+      atlasRebuildPending = true;
+      atlasRebuildReason = reason;
+      return;
+    }
+    atlasRebuildPending = false;
     diag.event('log', `atlas auto-rebuild: ${reason}`);
     try {
       await queueAtlasBuild();
@@ -933,7 +1052,52 @@ function scheduleAtlasRebuild(reason) {
     } catch (e) {
       diag.event('error', 'atlas auto-rebuild: ' + (e && e.message ? e.message : String(e)));
     }
-  }, 1200);
+  }, Math.max(0, delayMs));
+}
+
+/**
+ * 大订阅半径下，区块流可能持续数秒；固定 1.2s 防抖会在流式过程中反复重建 atlas。
+ * 流式期间只排队，等 section 静默/超时且描述符清空后，再统一重建一次。
+ */
+function maybeSettleStreaming(now = performance.now()) {
+  if (!streaming) return;
+  const quietMs = Math.min(2500, 1200 + currentRadius * 100);
+  const timeoutMs = Math.max(10000, 6000 + currentRadius * 1000);
+  if (!shouldSettleStreaming({
+    streaming,
+    now,
+    lastSectionAt,
+    streamStartedAt,
+    quietMs,
+    timeoutMs,
+    pendingDescriptors: baked.pendingIds.size,
+  })) return;
+  streaming = false;
+  diag.event('log', `stream settled: ${streamSectionsSeen}/${streamExpectedSections} sections`
+    + (atlasRebuildPending ? ', atlas queued' : ''));
+  if (atlasRebuildPending) {
+    const reason = atlasRebuildReason || 'stream settled';
+    atlasRebuildPending = false;
+    if (atlasRebuildTimer) {
+      clearTimeout(atlasRebuildTimer);
+      atlasRebuildTimer = null;
+    }
+    armAtlasRebuild(0, reason);
+  }
+}
+
+/**
+ * 贴图引用变多后自动重建图集。
+ *
+ * 因为 `stableTileOrder` 保证"只追加、不挪位"，重建是**非破坏性**的：旧瓦片位置不变，
+ * 已建网格的 uv 依然有效 —— 所以这里**不再把全部段标脏**（以前那样做，重建后要 10–30 秒才追平，
+ * 期间旧网格指着新图集里移位后的瓦片，于是出现"草方块变钻石块"）。
+ */
+function scheduleAtlasRebuild(reason) {
+  atlasRebuildPending = true;
+  atlasRebuildReason = reason;
+  if (streaming) return;
+  armAtlasRebuild(1200, reason);
 }
 async function refreshDescriptorsIfNeeded() {
   if (descriptorBusy || !baked.ready || baked.pendingIds.size === 0) return;
@@ -1162,9 +1326,13 @@ function meshDirtySections(msBudget) {
 
 let pool = createMeshPool();
 let poolBuffers = [];   // [positions, uvs, tints, lights, index]
+let poolRebuilds = 0;
+let poolLastAction = 'init';
 
 /** 按当前池容量创建/重建 GPU 缓冲。扩容或整理后调用；随后全部段重新网格化。 */
-function rebuildPoolBuffers() {
+function rebuildPoolBuffers(action = 'init') {
+  poolRebuilds++;
+  poolLastAction = action;
   const device = gpu.device;
   for (const buffer of poolBuffers) buffer.destroy();
   poolBuffers = pool.vertexBufferBytes().map(size =>
@@ -1247,11 +1415,12 @@ function uploadSectionMesh(section, mesh) {
   if (!handle) {
     // 池满：按需求右尺寸化（扩容或缩容），然后**必须清空竞技场**再整池重建
     //（否则已用计数不归零，分配永远失败；盲目 ×4 会把显存推到几倍并伴随超长帧）。
-    const plan = clampCapsToDevice(pool.planOnFailure());
-    diag.event('log', `mesh pool ${plan.action} → 顶点 ${(plan.vertexCapacity / 1024).toFixed(0)}k 索引 ${(plan.solidIndexCapacity / 1024).toFixed(0)}k`);
+    const decision = pool.planOnFailure();
+    const plan = clampCapsToDevice(decision);
+    diag.event('log', `mesh pool ${decision.action} → 顶点 ${(plan.vertexCapacity / 1024).toFixed(0)}k 索引 ${(plan.solidIndexCapacity / 1024).toFixed(0)}k`);
     pool.resize(plan);
     pool.compact();
-    rebuildPoolBuffers();
+    rebuildPoolBuffers(decision.action);
     state.dirty.add(key);
     return;
   }
@@ -1331,17 +1500,30 @@ let entityPartKeyCount = -1;
 let entityPartSkinKey = '';
 let entityPartSkins = [];
 const entityPartBuckets = new Map();
+const entityPartAccumulator = new Map();
 let entityPartAtlasBindGroup = null;
 let entityPartDraws = 0;
 let entityPartInstanceCount = 0;
+let entityPartCulled = 0;
+let entityPartCpuMs = 0;
+let entityPartBufferBytes = 0;
+let entityPartInstanceBuffer = null;
+let entityPartInstanceCapacity = 0;
+let entityPartStaging = new Float32Array(0);
+let entityPartDrawList = [];
 
 function destroyEntityPartResources() {
   for (const bucket of entityPartBuckets.values()) {
     if (bucket.vertexBuffer) bucket.vertexBuffer.destroy();
     if (bucket.indexBuffer) bucket.indexBuffer.destroy();
-    if (bucket.instanceBuffer) bucket.instanceBuffer.destroy();
   }
+  if (entityPartInstanceBuffer) entityPartInstanceBuffer.destroy();
+  entityPartInstanceBuffer = null;
+  entityPartInstanceCapacity = 0;
+  entityPartStaging = new Float32Array(0);
+  entityPartDrawList = [];
   entityPartBuckets.clear();
+  entityPartAccumulator.clear();
   entityPartTemplates = null;
 }
 
@@ -1405,7 +1587,6 @@ function ensureEntityPartDraw() {
         device.queue.writeBuffer(indexBuffer, 0, part.indices);
         entityPartBuckets.set(`${typeKey}\t${pi}`, {
           template: part, vertexBuffer, indexBuffer,
-          instanceBuffer: null, instanceCapacity: 0, count: 0,
         });
       });
     }
@@ -1423,12 +1604,26 @@ function ensureEntityPartDraw() {
 
   for (const bucket of entityPartBuckets.values()) bucket.count = 0;
   entityPartInstanceCount = 0;
+  entityPartBufferBytes = 0;
+  const cpuStart = performance.now();
+  let culled = 0;
   const instances = buildEntityPartInstances(
     entityPartTemplates,
-    [...state.entities.values()],
+    state.entities.values(),
     entityTypeKeys,
     performance.now() / 1000,
     {
+      packed: true,
+      reuseBuckets: entityPartAccumulator,
+      cullAabb: entity => {
+        const visible = aabbInFrustum(
+          frustum,
+          entity.x - 4, entity.y - 1, entity.z - 4,
+          entity.x + 4, entity.y + 4, entity.z + 4,
+        );
+        if (!visible) culled++;
+        return visible;
+      },
       skinIndexOf: entity => {
         if (!entity.uuid) return 0;
         const path = `wgd:skins/${entity.uuid}.png`;
@@ -1436,29 +1631,31 @@ function ensureEntityPartDraw() {
       },
     },
   );
-  for (const [key, data] of instances) {
-    const bucket = entityPartBuckets.get(key);
-    if (!bucket || !data.count) continue;
-    const strideFloats = 20;
-    const bytes = data.count * strideFloats * 4;
-    if (!bucket.instanceBuffer || bucket.instanceCapacity * strideFloats * 4 < bytes) {
-      if (bucket.instanceBuffer) bucket.instanceBuffer.destroy();
-      bucket.instanceCapacity = Math.max(data.count, 64);
-      bucket.instanceBuffer = device.createBuffer({
-        size: bucket.instanceCapacity * strideFloats * 4,
+  const packed = packEntityPartInstances(instances, entityPartStaging);
+  entityPartStaging = packed.staging;
+  entityPartCpuMs = performance.now() - cpuStart;
+  entityPartBufferBytes = packed.usedFloats * 4;
+  if (entityPartBufferBytes) {
+    if (!entityPartInstanceBuffer || entityPartInstanceCapacity < entityPartBufferBytes) {
+      if (entityPartInstanceBuffer) entityPartInstanceBuffer.destroy();
+      entityPartInstanceCapacity = Math.max(entityPartBufferBytes, 64 * 20 * 4);
+      entityPartInstanceBuffer = device.createBuffer({
+        size: entityPartInstanceCapacity,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
     }
-    const packed = new Float32Array(data.count * strideFloats);
-    for (let i = 0; i < data.count; i++) {
-      packed.set(data.matrices.subarray(i * 16, i * 16 + 16), i * strideFloats);
-      packed.set(data.colors.subarray(i * 4, i * 4 + 4), i * strideFloats + 16);
-    }
-    device.queue.writeBuffer(bucket.instanceBuffer, 0, packed);
-    bucket.count = data.count;
-    entityPartInstanceCount += data.count;
+    device.queue.writeBuffer(entityPartInstanceBuffer, 0, packed.staging.subarray(0, packed.usedFloats));
   }
-  return entityPartBuckets.size > 0;
+  entityPartInstanceCount = packed.count;
+  entityPartCulled = culled;
+  entityPartDrawList = packed.draws
+    .map(entry => ({
+      bucket: entityPartBuckets.get(entry.key),
+      offsetBytes: entry.offsetBytes,
+      count: entry.data.count,
+    }))
+    .filter(entry => entry.bucket);
+  return entityPartDrawList.length > 0;
 }
 
 function drawEntityPart(pass) {
@@ -1468,14 +1665,15 @@ function drawEntityPart(pass) {
   pass.setBindGroup(1, entityPartAtlasBindGroup);
   let draws = 0;
   let quads = 0;
-  for (const bucket of entityPartBuckets.values()) {
-    if (!bucket.count) continue;
+  for (const entry of entityPartDrawList) {
+    const bucket = entry.bucket;
+    if (!bucket || !entry.count) continue;
     pass.setVertexBuffer(0, bucket.vertexBuffer);
-    pass.setVertexBuffer(1, bucket.instanceBuffer);
+    pass.setVertexBuffer(1, entityPartInstanceBuffer, entry.offsetBytes);
     pass.setIndexBuffer(bucket.indexBuffer, 'uint32');
-    pass.drawIndexed(bucket.template.indexCount, bucket.count);
+    pass.drawIndexed(bucket.template.indexCount, entry.count);
     draws++;
-    quads += bucket.template.quadCount * bucket.count;
+    quads += bucket.template.quadCount * entry.count;
   }
   entityPartDraws = draws;
   entityDrawQuads = quads;
@@ -1506,11 +1704,10 @@ function ensureEntityDraw() {
     const r = baked.entityAtlas.uvRect(probe);
     const first = mesh.positions.length ? null : null;
     let q0 = null;
-    outer:
     for (const e of state.entities.values()) {
       const key = entityTypeKeys.get(e.typeId);
       const info = key ? entityPartsFor(entityBundle, key) : null;
-      if (info && info.parts[0] && info.parts[0].quads[0]) { q0 = info.parts[0].quads[0]; break outer; }
+      if (info && info.parts[0] && info.parts[0].quads[0]) { q0 = info.parts[0].quads[0]; break; }
     }
     console.log('[WhatGuysDoing] entity uv probe',
       'atlas', baked.entityAtlas.width + 'x' + baked.entityAtlas.height,
@@ -1634,6 +1831,11 @@ function drawBaked(pass) {
 
 async function rebuildAtlasNow() {
   if (!baked.ready) return;
+  atlasRebuildPending = false;
+  if (atlasRebuildTimer) {
+    clearTimeout(atlasRebuildTimer);
+    atlasRebuildTimer = null;
+  }
   try {
     await queueAtlasBuild();
     await queueEntityAtlasBuild('manual', { force: true });
@@ -1642,9 +1844,8 @@ async function rebuildAtlasNow() {
       pendingRemesh.clear();
     }
     console.log('[WhatGuysDoing] 图集已重建', baked.atlas.stats);
-    // R 的语义是"刷新"：图集重建后整片重网格一次，让画面立刻反映当前数据
-    for (const key of state.sections.keys()) state.dirty.add(key);
-    firstCoverageDone = false;
+    // 只补防抖窗口内漏贴图的段；布局只追加且页面尺寸固定，其余旧 mesh 的 uv 仍然有效。
+    // 以前这里无条件全量标脏，R 一次就会让所有区块消失再按预算陆续回来。
   } catch (e) {
     baked.error = e && e.message ? e.message : String(e);
     baked.enabled = false;
@@ -1660,8 +1861,27 @@ async function rebuildAtlasNow() {
 let pointerLocked = false;
 let dragLook = false;
 let lockFailed = false;
+let keyboardLocked = false;
+let fullscreenRequested = false;
 let lastX = 0, lastY = 0;
 const LOOK_SENSITIVITY = 0.15;
+
+/** Chromium：Keyboard Lock 需要全屏；失败时保留普通 keydown/beforeunload 兜底。 */
+async function enableKeyboardLock() {
+  if (!navigator.keyboard || !navigator.keyboard.lock) return false;
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      fullscreenRequested = true;
+      await document.documentElement.requestFullscreen();
+    }
+    await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS']);
+    keyboardLocked = true;
+    return true;
+  } catch {
+    keyboardLocked = false;
+    return false;
+  }
+}
 
 /** G：把诊断现场显示成可选中复制的文本（并尝试写剪贴板）——"导出"必须看得见才算导出。 */
 function showDiagnostics(text) {
@@ -1708,6 +1928,8 @@ function bindInput() {
   canvas.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     if (!pointerLocked && document.pointerLockElement !== canvas) {
+      // 先申请全屏 + Keyboard Lock；普通标签页无法拦截 Ctrl+W。
+      enableKeyboardLock();
       const req = canvas.requestPointerLock({ unadjustedMovement: true });
       // 部分浏览器返回 Promise；失败则走拖拽兜底
       if (req && typeof req.catch === 'function') req.catch(() => startDrag(e));
@@ -1733,11 +1955,33 @@ function bindInput() {
 
   document.addEventListener('pointerlockchange', () => {
     pointerLocked = document.pointerLockElement === canvas;
-    if (!pointerLocked) dragLook = false;
+    if (!pointerLocked) {
+      dragLook = false;
+      if (keyboardLocked) {
+        keyboardLocked = false;
+        if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+      }
+      if (fullscreenRequested && document.fullscreenElement) {
+        fullscreenRequested = false;
+        document.exitFullscreen().catch(() => {});
+      }
+    }
   });
   document.addEventListener('pointerlockerror', () => {
     pointerLocked = false;
     lockFailed = true;
+  });
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) {
+      keyboardLocked = false;
+      fullscreenRequested = false;
+    }
+  });
+  // 普通标签页 Ctrl+W 无法静默拦截；鼠标锁定时至少用离开确认兜底。
+  window.addEventListener('beforeunload', e => {
+    if (!pointerLocked) return;
+    e.preventDefault();
+    e.returnValue = '';
   });
 
   // 锁定后：鼠标位移直接转为视角（不需要按键）
@@ -1754,6 +1998,16 @@ function bindInput() {
 
   window.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
+    const mod = e.ctrlKey || e.metaKey;
+    // 鼠标锁定后才接管：关闭标签页 / 全选 / 保存网页 / 收藏网页。
+    // 未锁定时保留浏览器默认行为。
+    if (pointerLocked && mod && (
+        e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD'
+        || k === 'w' || k === 'a' || k === 's' || k === 'd')) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (k === '[') { subscribe(0, 0, Math.max(1, currentRadius - 1)); }
     if (k === ']') { subscribe(0, 0, Math.min(16, currentRadius + 1)); }
     if (k === 'b') {
@@ -1762,6 +2016,31 @@ function bindInput() {
       for (const key of state.sections.keys()) state.dirty.add(key);
     }
     if (k === 'r') rebuildAtlasNow();
+    if (k === 'l') {
+      const wasLowres = lowresActive();
+      if (!hybridLowresMode && !globalLowresMode) {
+        hybridLowresMode = true;
+      } else if (hybridLowresMode) {
+        hybridLowresMode = false;
+        globalLowresMode = true;
+      } else {
+        globalLowresMode = false;
+        hybridLowresMode = false;
+      }
+      // 进入 lowres 时丢弃旧 tile：服务端重启/缓存版本升级后，浏览器内存里可能还留着旧高度。
+      if (!wasLowres && lowresActive() && gpu.lowres) gpu.lowres.clear();
+      diag.event('log', `lowres mode ${globalLowresMode ? 'global' : hybridLowresMode ? 'hybrid' : 'live'}`);
+    }
+    if (k === 'n') {
+      const index = LOWRES_DIMENSIONS.indexOf(lowresDimension);
+      lowresDimension = LOWRES_DIMENSIONS[(index + 1) % LOWRES_DIMENSIONS.length];
+      if (gpu.lowres) gpu.lowres.clear();
+      diag.event('log', `lowres dimension ${lowresDimension}`);
+    }
+    if (k === 'j' && gpu.lowres) {
+      gpu.lowres.setChunkBorders(!gpu.lowres.chunkBorders);
+      diag.event('log', `chunk borders ${gpu.lowres.chunkBorders ? 'on' : 'off'}`);
+    }
     if (k === 'g') {
       // 之前只往控制台打，页面上完全看不出来 = 等于没有导出。现在弹可选中文本 + 尝试写剪贴板。
       const dump = diag.dump() + '\n\n现场快照：' + JSON.stringify(snapshot(), null, 2);
@@ -1792,6 +2071,19 @@ function clampCapsToDevice(caps) {
 
 function subscribe(centerX, centerZ, radius) {
   currentRadius = radius;
+  streamEpoch++;
+  streaming = true;
+  streamStartedAt = performance.now();
+  lastSectionAt = streamStartedAt;
+  streamSectionsSeen = 0;
+  streamExpectedSections = (2 * radius + 1) * (2 * radius + 1) * 8;
+  atlasRebuildPending = false;
+  atlasRebuildReason = '';
+  if (atlasRebuildTimer) {
+    clearTimeout(atlasRebuildTimer);
+    atlasRebuildTimer = null;
+  }
+  firstCoverageDone = false;
   // 先按订阅半径预估池容量：订阅时网格已被清空，此刻扩容是"免费"的；
   // 否则会在流式加载到一半时扩容（销毁+申请几百 MB + 全量重网格）→ 界面卡死。
   const estimate = clampCapsToDevice(estimatePoolCapacity(radius));
@@ -1803,7 +2095,7 @@ function subscribe(centerX, centerZ, radius) {
     diag.event('log', `pool sized for radius ${radius}: 顶点 ${(estimate.vertexCapacity / 1024).toFixed(0)}k`);
     pool.resize(estimate);
     pool.compact();
-    rebuildPoolBuffers();
+    rebuildPoolBuffers('subscribe');
   }
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const buf = new ArrayBuffer(11);
@@ -1817,7 +2109,6 @@ function subscribe(centerX, centerZ, radius) {
   state.sections.clear();
   state.sectionIndex.clear();
   state.dirty.clear();
-  camInitialized = false;
 }
 
 function connect() {
@@ -1848,8 +2139,7 @@ function connect() {
   };
   ws.onclose = () => { document.getElementById('hud').textContent = '连接已断开，3 秒后重连…'; setTimeout(connect, 3000); };
 }
-
-let lastFrame = performance.now();
+performance.now();
 let fps = 0;
 let hudTimer = 0;
 let serverStatus = null;
@@ -1912,12 +2202,22 @@ function updateHud() {
 }
 
 function updateHudInner() {
+  saveCamera();
   const dims = [...state.dims.values()].map(d => d.name).join(', ') || '-';
   const lines = [
     `fps ${fps.toFixed(0)}   实例 ${instanceCount}   section ${state.sections.size}   实体 ${state.entities.size}   构建 ${BUILD_TAG}`,
     `维度 ${dims}   玩家类型 ${state.playerTypeId}   tick ${state.tick}   gameTime ${state.gameTime}`,
     `订阅 半径 ${currentRadius}   收到 ${(state.bytesReceived / 1024 / 1024).toFixed(2)} MiB`,
   ];
+  const wsAge = ws && lastWsMessageAt ? ((performance.now() - lastWsMessageAt) / 1000).toFixed(1) : '-';
+  lines.push(`WS ${ws ? ws.readyState : '-'}   最后消息 ${wsAge}s   帧 ${lastFrameMs.toFixed(1)}ms   tick ${state.tick}`);
+  if (lowresActive() && gpu.lowres) {
+    const s = gpu.lowres.stats();
+    const mode = globalLowresMode ? 'global' : 'hybrid';
+    lines.push(`LOD ${mode} ${lowresDimension}   tile ${s.tiles} (L1 ${s.lod1}/L2 ${s.lod2}/L3 ${s.lod3})   v${s.cacheVersion}/srv${s.serverCacheVersion ?? '?'}   颜色 ${s.serverColorResolved}/${s.serverColorFallback}   空 ${s.empty}   加载 ${s.loading} (${s.maxLoadingMs}ms)   等待 ${s.pending}   失败 ${s.failed}   请求 ${s.requestStats.ok}/${s.requestStats.pending}/${s.requestStats.failed}   绘制 ${s.draws}   quad ${s.quads}   coverage ${s.coverage}`);
+    if (s.lastFailure) lines.push(`LOD 最后失败 ${s.lastFailure}`);
+    if (s.failedKeys.length) lines.push(`LOD 失败键 ${s.failedKeys.join(', ')}`);
+  }
   lines.push(`相机 x ${camera.x.toFixed(1)} y ${camera.y.toFixed(1)} z ${camera.z.toFixed(1)}`
     + `  yaw ${camera.yaw.toFixed(0)}° pitch ${camera.pitch.toFixed(0)}°`);
   if (state.entities.size) {
@@ -1960,12 +2260,22 @@ function updateHudInner() {
       lines.push(`实体图集 ${a.tiles} 张${a.missing ? `(缺 ${a.missing})` : ''} ${a.width}×${a.height}`
         + `  不透明 ${a.opaque} 镂空 ${a.cutout} 半透明 ${a.translucent}`);
     }
+    if (streaming) {
+      const age = ((performance.now() - lastSectionAt) / 1000).toFixed(1);
+      lines.push(`流式订阅 中 epoch ${streamEpoch}  section ${streamSectionsSeen}/${streamExpectedSections}`
+        + `  最后 ${age}s 前  ${atlasRebuildPending ? 'atlas 排队' : 'atlas 正常'}`);
+    } else if (atlasRebuildPending) {
+      lines.push('atlas 重建排队中');
+    }
+    lines.push(`图集重建 ${atlasRebuilds} 次  上次尺寸变化 ${atlasLastSizeChanged ? '是(全量)' : '否'}`
+      + `  ${baked.atlas.width}×${baked.atlas.height}`);
     lines.push(`初始化 ${baked.stats.initMs}ms  本帧网格 ${baked.stats.meshMs}ms  累计重网格 ${baked.stats.meshed} 段 / ${baked.stats.quads} 面`);
     const ps = pool.stats();
     lines.push(`可见 ${bakedVisible}/${baked.sections.size} 段  绘制 ${bakedDraws} 次  状态切换 2 次（交错顶点 + 索引）`
       + `  池 顶点 ${(ps.vertexUsed / 1024).toFixed(0)}k/${(ps.vertexCapacity / 1024).toFixed(0)}k`
       + ` 索引 ${(ps.solidUsed / 1024).toFixed(0)}k/${(ps.solidIndexCapacity / 1024).toFixed(0)}k`
-      + ` 空洞 ${(100 * (ps.solidUsed - ps.solidLive) / Math.max(1, ps.solidIndexCapacity)).toFixed(0)}%`);
+      + ` 空洞 ${(100 * (ps.solidUsed - ps.solidLive) / Math.max(1, ps.solidIndexCapacity)).toFixed(0)}%`
+      + `  池重建 ${poolRebuilds} 次 上次 ${poolLastAction}`);
     if (unknown > 0) {
       lines.push(`有 ${unknown} 次贴图不在图集内（显示为洋红）${atlasRebuildTimer ? '：正在自动重建图集…' : '，按 R 可立即重建'}`);
     }
@@ -2017,6 +2327,8 @@ function updateHudInner() {
       lines.push(`实体模型 已解析 ${resolved} / 未解析 ${unresolved}  部件 ${partCount}  面 ${quadCount}`);
       lines.push(`实体绘制 已绘 ${entityDrawQuads} 面  跳过 ${entitySkipped}  首顶点 uv ${entityFirstUv}`
         + (baked.entityAtlas ? '' : '（实体图集未就绪）'));
+      lines.push(`实体实例 ${entityPartInstanceCount}  CPU ${entityPartCpuMs.toFixed(2)}ms  draws ${entityPartDraws}`
+        + `  剔除 ${entityPartCulled}  实例缓冲 ${(entityPartBufferBytes / 1024).toFixed(0)}KB`);
     }
     // 方块增量：数字必须在最前面，玩家放下/打掉方块时应当立刻跳动
     lines.push(`方块增量 消息 ${deltaMessages}  方块 ${deltaBlocks}  丢弃 ${deltaDropped}`
@@ -2060,11 +2372,42 @@ function updateHudInner() {
     lines.push('按 G 输出完整现场到控制台（持久化在 localStorage: wgd.diag.v1）');
   }
   lines.push(pointerLocked
-    ? `鼠标已锁定（移动即转头，ESC 退出）　速度 ${camera.speed.toFixed(0)}`
+    ? `鼠标已锁定（移动即转头，ESC 退出）${keyboardLocked ? '　键盘锁已接管 Ctrl+W/A/S' : '　浏览器快捷键未完全锁定'}　速度 ${camera.speed.toFixed(0)}`
     : (lockFailed
       ? `指针锁定不可用：按住左键拖动看视角　速度 ${camera.speed.toFixed(0)}`
       : `点击画面锁定鼠标（拖动也可）　速度 ${camera.speed.toFixed(0)}`));
-  document.getElementById('hud').textContent = lines.join('\n');
+  document.getElementById('hud').textContent = renderHudGroups(lines);
+}
+
+const HUD_GROUP_ORDER = ['会话', 'LOD', '相机', '服务端', '资产', '地形', '实体', '诊断', '操作', '其他'];
+
+function hudGroupOf(line) {
+  if (/^(fps |维度 |订阅 |WS |服务端 sessions|tick 采样)/.test(line)) return '会话';
+  if (/^LOD /.test(line)) return 'LOD';
+  if (/^(相机 |最近实体)/.test(line)) return '相机';
+  if (/^服务端 /.test(line)) return '服务端';
+  if (/^资产 /.test(line)) return '资产';
+  if (/^(实体|实体图集|实体模型|实体绘制|实体实例)/.test(line)) return '实体';
+  if (/^(烘焙 |烘焙路径|实体图集|流式订阅|atlas |图集重建|初始化 |可见 |有 \d+ 次贴图|上传异常|相机最近段|方块增量|面剔除|输入矩形|首个 uv|uv\[)/.test(line)) return '地形';
+  if (/^(内存 |GPU |WebGPU|解析错误|实例已|上次会话|按 G)/.test(line)) return '诊断';
+  if (/^(鼠标|点击画面|指针锁定)/.test(line)) return '操作';
+  return '其他';
+}
+
+function renderHudGroups(lines) {
+  const groups = new Map();
+  for (const line of lines) {
+    const title = hudGroupOf(line);
+    if (!groups.has(title)) groups.set(title, []);
+    groups.get(title).push('  ' + line);
+  }
+  const out = [];
+  for (const title of HUD_GROUP_ORDER) {
+    const rows = groups.get(title);
+    if (!rows || !rows.length) continue;
+    out.push(`▌${title}`, ...rows, '');
+  }
+  return out.join('\n').trimEnd();
 }
 
 // ---------------------------------------------------------------- 主循环
@@ -2114,6 +2457,7 @@ function updateHudInner() {
     const workStart = performance.now();
     frame();
     const workMs = performance.now() - workStart;
+    lastFrameMs = workMs;
     // 单帧超长是 GPU 看门狗（TDR）重置设备的前兆，单独留证，便于和崩溃时刻对齐
     if (workMs > 200) diag.longFrame(workMs, snapshot());
     hudTimer += dt;

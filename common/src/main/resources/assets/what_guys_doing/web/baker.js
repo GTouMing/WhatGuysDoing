@@ -330,8 +330,6 @@ export function createBaker(io) {
 
   return {
     bakeState,
-    resolveModel,
-    selectVariants,
     stats: () => ({ ...stats }),
     texturesUsed: () => [...textures].sort(),
     clearCaches() { modelCache.clear(); stateCache.clear(); },

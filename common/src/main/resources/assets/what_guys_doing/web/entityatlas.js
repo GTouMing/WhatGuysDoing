@@ -30,6 +30,7 @@ function positiveInt(value, fallback) {
 /**
  * shelf 打包。entries 顺序即最终布局顺序，调用方必须保证追加而不是重排。
  * @param {Array<{path: string, width: number, height: number}>} entries
+ * @param options
  * @returns {{width:number, height:number, usedHeight:number,
  *            placements: Map<string,{x:number,y:number,width:number,height:number}>,
  *            missingPlacement:{x:number,y:number,width:number,height:number},
@@ -141,7 +142,7 @@ function drawPaddedBitmap(ctx, bitmap, place, padding) {
  * 浏览器侧构建：并发取图 → 原生尺寸打包 → 建 GPU 纹理。
  * @param device WebGPU device
  * @param texturePaths `minecraft:textures/entity/pig/pig.png` 形式
- * @param options.fetchTexture(path) → Promise<ImageBitmap|null>
+ * @param options
  */
 export async function buildEntityAtlas(device, texturePaths, options = {}) {
   const paths = stableTileOrder(texturePaths || []);

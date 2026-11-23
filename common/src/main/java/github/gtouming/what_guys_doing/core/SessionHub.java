@@ -9,6 +9,7 @@ import github.gtouming.what_guys_doing.web.WebSocketConnection;
 import github.gtouming.what_guys_doing.world.BlockDeltaCollector;
 import github.gtouming.what_guys_doing.world.BlockDeltaSet;
 import github.gtouming.what_guys_doing.world.EntitySnapshot;
+import github.gtouming.what_guys_doing.world.LowresStore;
 import github.gtouming.what_guys_doing.world.SectionSnapshot;
 import github.gtouming.what_guys_doing.world.TickFrame;
 import github.gtouming.what_guys_doing.world.WorldSampler;
@@ -52,6 +53,7 @@ public final class SessionHub {
     private DimTable dimensions;
     private WebServer web;
     private AssetCache assets;
+    private LowresStore lowres;
     @lombok.Getter
     private volatile boolean running;
     private int tickCounter;
@@ -71,6 +73,17 @@ public final class SessionHub {
     /** 原版资产缓存（未启用时为 null）。 */
     public AssetCache assets() {
         return assets;
+    }
+
+    public LowresStore.TileResult lowresTile(String dim, int lod, int x, int z) {
+        LowresStore store = lowres;
+        return store == null ? null : store.tile(dim, lod, x, z);
+    }
+
+    public String lowresStatusJson() {
+        LowresStore store = lowres;
+        if (store != null) return store.statusJson();
+        return Json.object().put("state", "DISABLED").put("message", "lowres disabled").end();
     }
 
     public String assetStatusJson() {
@@ -204,6 +217,8 @@ public final class SessionHub {
                 this.assets = cache;
                 cache.start();
             }
+            this.lowres = new LowresStore(server, config.resolveConfigDir().resolve("lowres"),
+                    assets == null ? null : assets.contentDir());
             running = true;
             LOGGER.info("viewer data service started: local http://127.0.0.1:{}/  lan {}",
                     web.port(), WebServer.describeLanAddress(web.port()));
@@ -227,6 +242,10 @@ public final class SessionHub {
         sessions.clear();
         sectionCache.clear();
         assets = null;
+        if (lowres != null) {
+            lowres.close();
+            lowres = null;
+        }
         if (web != null) {
             web.stop();
             web = null;

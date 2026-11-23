@@ -86,20 +86,25 @@ console.log('=== 3. 键盘移动方向 ===');
 
   const c6 = cam({ yaw: 90, pitch: 45, speed: 10 });
   moveCamera(c6, new Set(['w']), 1);
-  expect('抬头 45° 时 W 会上升 (y>0)', c6.y > 0, `y=${c6.y.toFixed(3)}`);
+  expect('W/S 保持水平（不随 pitch 抬头）', c6.y === 0, `y=${c6.y.toFixed(3)}`);
 
   const c7 = cam({ yaw: 30, pitch: 89, speed: 10 });
   moveCamera(c7, new Set(['d']), 1);
   expect('接近正上方时横移仍保持水平 (y 不变)', near(c7.y, 0), `y=${c7.y}`);
 
   const c8 = cam({ yaw: 0, pitch: 0, speed: 10 });
-  moveCamera(c8, new Set(['shift', 'w']), 1);
-  expect('Shift 加速 3×', near(c8.z, 30), `z=${c8.z}`);
+  moveCamera(c8, new Set(['control', 'w']), 1);
+  expect('Control 加速 3×', near(c8.z, 30), `z=${c8.z}`);
 
   const c9 = cam({ yaw: 0, pitch: 0, speed: 10 });
   moveCamera(c9, new Set([' ']), 1);
-  moveCamera(c9, new Set(['control']), 0.5);
-  expect('空格上升 / Ctrl 下降', near(c9.y, 5), `y=${c9.y}`);
+  moveCamera(c9, new Set(['shift']), 0.5);
+  expect('空格上升 / Shift 下降', near(c9.y, 5), `y=${c9.y}`);
+
+  const c10 = cam({ yaw: 0, pitch: 0, speed: 10 });
+  moveCamera(c10, new Set(['w', 'd']), 1);
+  expect('斜向 W+D 先归一化，速度仍为 speed×dt', near(Math.hypot(c10.x, c10.y, c10.z), 10),
+    `len=${Math.hypot(c10.x, c10.y, c10.z).toFixed(3)}`);
 }
 
 console.log('=== 4. 视角与投影自洽（转视角后正前方仍在屏幕中心）===');

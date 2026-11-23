@@ -29,9 +29,10 @@ console.log('=== 2. 释放→空洞清零区间（下标为索引缓冲绝对位
   const ranges = pool.free(a);
   expect('返回实体与半透明两段清零区间', ranges.length === 2 && ranges[0][0] === 0 && ranges[0][1] === 200 && ranges[1][0] === 3000 && ranges[1][1] === 30,
     JSON.stringify(ranges));
-  expect('释放后 live 归零、used 不变（留洞不复用）', pool.solidIndexLive === 0 && pool.solidIndexUsed === 200);
+  expect('释放后 live 归零、used 不变（free-list 复用前保留高水位）', pool.solidIndexLive === 0 && pool.solidIndexUsed === 200);
   const zero = pool.allocate(10, 5, 0);
-  expect('后续分配接在空洞之后（不打乱已发号）', zero.solidFirst === 200);
+  expect('后续分配复用空洞', zero.vertexOffset === 0 && zero.solidFirst === 0,
+    `${zero.vertexOffset}/${zero.solidFirst}`);
 }
 
 console.log('=== 3. 空间不足 → 扩容 或 整理 ===');
@@ -44,9 +45,11 @@ console.log('=== 3. 空间不足 → 扩容 或 整理 ===');
   expect('几乎无空洞 → 选择扩容，容量按存活量右尺寸化（100×4 → 向上取整到 64k）',
     plan1.action === 'grow' && plan1.vertexCapacity === 65536 && plan1.solidIndexCapacity === 65536, JSON.stringify(plan1));
 
-  // 空洞多 → 整理
-  const p2 = createMeshPool({ vertexCapacity: 1000, solidIndexCapacity: 1000, translucentIndexCapacity: 1000 });
-  for (let i = 0; i < 10; i++) { const h = p2.allocate(50, 50, 0); p2.free(h); }
+  // 空洞多 → 整理（free-list 会复用，但这里保留未释放的段制造 waste）
+  const p2 = createMeshPool({ vertexCapacity: 900, solidIndexCapacity: 900, translucentIndexCapacity: 900 });
+  const handles = [];
+  for (let i = 0; i < 10; i++) handles.push(p2.allocate(50, 50, 0));
+  for (let i = 0; i < 8; i++) p2.free(handles[i]);
   const plan2 = p2.planOnFailure();
   expect('空洞占比 > 40% → 选择整理（并带右尺寸化的目标容量）',
     plan2.action === 'compact' && plan2.vertexCapacity > 0, JSON.stringify(plan2));

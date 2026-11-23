@@ -81,7 +81,10 @@ export function atlasCapacity(tileCount) {
 export async function buildAtlas(device, texturePaths, options) {
   const paths = stableTileOrder(texturePaths);
   const count = Math.max(1, paths.length);
-  const capacity = atlasCapacity(count);
+  // 方块 atlas 预留固定容量：正常重建不改变页面尺寸，旧网格的归一化 uv 继续有效，
+  // 只追加新槽位；否则每次跨 256 瓦片台阶都会全量重网格，表现为区块陆续显现。
+  const minCapacity = options && Number.isFinite(options.minCapacity) ? options.minCapacity : 0;
+  const capacity = Math.max(atlasCapacity(count), minCapacity);
   const columns = Math.ceil(Math.sqrt(capacity));
   const rows = Math.ceil(capacity / columns);
   const width = columns * TILE;

@@ -1,7 +1,7 @@
 // entityrender-check.mjs — M3a per-part 模板/实例矩阵回归（无 DOM）。
 import fs from 'node:fs';
 import {
-  buildEntityPartTemplates, buildEntityPartInstances, entityWorldMatrix,
+  buildEntityPartTemplates, buildEntityPartInstances, packEntityPartInstances, entityWorldMatrix,
 } from '../common/src/main/resources/assets/what_guys_doing/web/entityrender.js';
 import { buildEntityMesh } from '../common/src/main/resources/assets/what_guys_doing/web/entitymesh.js';
 
@@ -29,6 +29,36 @@ expect('part quad 总数 42', partQuad === 42, String(partQuad));
 console.log('\n=== 2. 实例矩阵 ===');
 const instances = buildEntityPartInstances(templates, [entity], typeKeys);
 expect('每 part 一个实例桶', instances.size === 6, String(instances.size));
+const packedInstances = buildEntityPartInstances(templates, [entity], typeKeys, 0, { packed: true });
+{
+  const key = 'minecraft:pig|0\t0';
+  const old = instances.get(key);
+  const packed = packedInstances.get(key);
+  expect('packed 实例长度正确', !!packed && packed.packed.length === packed.count * 20);
+  expect('packed 与旧路径矩阵一致',
+    !!old && !!packed && old.matrices.every((v, i) => Math.abs(v - packed.packed[i]) < 1e-6));
+  const tintOffset = 16;
+  expect('packed 与旧路径颜色一致',
+    !!old && !!packed && old.colors.every((v, i) => Math.abs(v - packed.packed[tintOffset + i]) < 1e-6));
+  const reuse = new Map();
+  const p1 = buildEntityPartInstances(templates, [entity], typeKeys, 0, { packed: true, reuseBuckets: reuse });
+  const buffer1 = p1.get(key)?.packed.buffer;
+  const p2 = buildEntityPartInstances(templates, [entity], typeKeys, 0, { packed: true, reuseBuckets: reuse });
+  const buffer2 = p2.get(key)?.packed.buffer;
+  expect('packed 缓冲跨帧复用', !!buffer1 && buffer1 === buffer2);
+  const packedAll = packEntityPartInstances(packedInstances);
+  expect('单实例缓冲总长度正确',
+    packedAll.staging.length === [...packedInstances.values()].reduce((n, b) => n + b.count * 20, 0));
+  expect('单实例缓冲 draw 数正确', packedAll.draws.length === 6, String(packedAll.draws.length));
+  const stage = new Float32Array(1024 * 20);
+  const stage1 = packEntityPartInstances(packedInstances, stage);
+  const stage2 = packEntityPartInstances(packedInstances, stage);
+  expect('staging 跨帧复用', stage1.staging.buffer === stage2.staging.buffer);
+  const culled = buildEntityPartInstances(templates, [entity], typeKeys, 0, { cullAabb: () => false });
+  const visible = buildEntityPartInstances(templates, [entity], typeKeys, 0, { cullAabb: () => true });
+  expect('视锥外实体不生成实例', culled.size === 0);
+  expect('视锥内实体正常生成实例', visible.size === 6, String(visible.size));
+}
 let instanceTotal = 0;
 for (const v of instances.values()) instanceTotal += v.count;
 expect('实例总数 6', instanceTotal === 6, String(instanceTotal));

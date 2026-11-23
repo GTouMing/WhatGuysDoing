@@ -382,9 +382,17 @@ export function buildEntityPartTemplates(bundle, typeKeys, uvRectFor, options = 
  * 按当前实体列表生成每 part 的实例矩阵。
  * @returns Map<`${typeKey}\t${partIndex}`, { matrices: Float32Array, count }>
  */
+const WHITE = [1, 1, 1, 1];
+
 export function buildEntityPartInstances(templates, entities, typeKeys, time = 0, options = {}) {
-  const buckets = new Map();
+  const packedMode = !!options.packed;
+  const reuseBuckets = options.reuseBuckets instanceof Map ? options.reuseBuckets : null;
+  const buckets = reuseBuckets || new Map();
+  if (reuseBuckets) {
+    for (const bucket of reuseBuckets.values()) bucket.count = 0;
+  }
   for (const entity of entities || []) {
+    if (typeof options.cullAabb === 'function' && !options.cullAabb(entity)) continue;
     const typeKey = typeKeys.get(entity.typeId);
     const vi = typeKey === 'minecraft:player' && typeof options.skinIndexOf === 'function'
       ? options.skinIndexOf(entity)
@@ -399,14 +407,34 @@ export function buildEntityPartInstances(templates, entities, typeKeys, time = 0
       const matrix = anim ? mul(world, anim) : world;
       const key = `${template.key}\t${pi}`;
       let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = { matrices: [], colors: [], count: 0 };
+      if (!bucket || (packedMode && !bucket.packed)) {
+        bucket = packedMode
+          ? { packed: new Float32Array(64 * 20), count: 0 }
+          : { matrices: [], colors: [], count: 0 };
         buckets.set(key, bucket);
       }
-      bucket.matrices.push(matrix);
-      bucket.colors.push(tintColor(part.tint, entity));
+      if (packedMode) {
+        const need = (bucket.count + 1) * 20;
+        if (need > bucket.packed.length) {
+          const next = new Float32Array(Math.max(need, bucket.packed.length * 2));
+          next.set(bucket.packed);
+          bucket.packed = next;
+        }
+        bucket.packed.set(matrix, bucket.count * 20);
+        bucket.packed.set(part.tint ? tintColor(part.tint, entity) : WHITE, bucket.count * 20 + 16);
+      } else {
+        bucket.matrices.push(matrix);
+        bucket.colors.push(tintColor(part.tint, entity));
+      }
       bucket.count++;
     }
+  }
+  if (packedMode) {
+    const out = new Map();
+    for (const [key, bucket] of buckets) {
+      out.set(key, { packed: bucket.packed.subarray(0, bucket.count * 20), count: bucket.count });
+    }
+    return out;
   }
   const out = new Map();
   for (const [key, bucket] of buckets) {
@@ -419,4 +447,19 @@ export function buildEntityPartInstances(templates, entities, typeKeys, time = 0
     out.set(key, { matrices: flat, colors, count: bucket.count });
   }
   return out;
+}
+
+export function packEntityPartInstances(instances, staging = null) {
+  const active = [];
+  let floats = 0;
+  for (const [key, data] of instances) {
+    if (!data || !data.count) continue;
+    active.push({ key, data, offsetBytes: floats * 4 });
+    floats += data.count * 20;
+  }
+  const target = staging && staging.length >= floats ? staging : new Float32Array(floats);
+  for (const entry of active) {
+    target.set(entry.data.packed, entry.offsetBytes / 4);
+  }
+  return { staging: target, usedFloats: floats, count: floats / 20, draws: active };
 }

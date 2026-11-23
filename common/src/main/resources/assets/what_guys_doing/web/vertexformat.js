@@ -45,6 +45,7 @@ export function interleaveMesh(mesh) {
   const tints = mesh.tints;
   const lights = mesh.lights;
   const aos = mesh.aos;
+  const alphas = mesh.alphas;
   let nanValues = 0;
   let zeroTints = 0;
   let zeroLights = 0;
@@ -81,7 +82,9 @@ export function interleaveMesh(mesh) {
     // AO 缺省 1（不做 AO 的老网格仍然正常）
     const ao = safe01(aos ? aos[i] ?? 1 : 1, 1);
     view.setUint8(base + 20, Math.round(ao * 255));
-    view.setUint8(base + 21, 0);
+    // lowres 用第二个分量携带“是否存在方块”的 alpha；普通地形/实体缺省 1。
+    const alpha = safe01(alphas ? alphas[i] ?? 1 : 1, 1);
+    view.setUint8(base + 21, Math.round(alpha * 255));
     view.setUint8(base + 22, 0);
     view.setUint8(base + 23, 0);
   }
@@ -98,5 +101,6 @@ export function readVertex(buffer, index) {
     tint: [view.getUint8(base + 16) / 255, view.getUint8(base + 17) / 255, view.getUint8(base + 18) / 255],
     light: view.getUint8(base + 19) / 255,
     ao: view.getUint8(base + 20) / 255,
+    alpha: view.getUint8(base + 21) / 255,
   };
 }
