@@ -33,6 +33,27 @@ dependencies {
     shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
 }
 
+// IntelliJ/Gradle dev client 在 32G 机器上会自动把堆开到 8.5G，叠加 139 个线程和
+// 系统 pagefile 余量极低时容易在 C2/native 分配阶段直接 OOM。显式限制 dev run 的提交量。
+loom {
+    runs {
+        client {
+            vmArgs '-Xmx4G', '-Xms512m', '-Xss512k',
+                    '-XX:MaxMetaspaceSize=768m',
+                    '-XX:CompressedClassSpaceSize=256m',
+                    '-XX:MaxDirectMemorySize=1G',
+                    '-XX:ActiveProcessorCount=8'
+        }
+        server {
+            vmArgs '-Xmx4G', '-Xms512m', '-Xss512k',
+                    '-XX:MaxMetaspaceSize=768m',
+                    '-XX:CompressedClassSpaceSize=256m',
+                    '-XX:MaxDirectMemorySize=1G',
+                    '-XX:ActiveProcessorCount=8'
+        }
+    }
+}
+
 shadowJar {
     configurations = [project.configurations.shadowBundle]
     archiveClassifier = 'dev-shadow'
