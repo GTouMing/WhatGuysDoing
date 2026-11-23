@@ -1,0 +1,3 @@
+Exception in thread "main" java.lang.AssertionError: caller reads the newly submitted synthetic JSON; expected bytes=57, actual bytes=57
+	at V1aStorageProbe.assertBytes(V1aStorageProbe.java:40)
+	at V1aStorageProbe.main(V1aStorageProbe.java:20)

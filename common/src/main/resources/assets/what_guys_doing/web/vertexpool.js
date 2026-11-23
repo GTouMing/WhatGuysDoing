@@ -7,9 +7,8 @@
 // 关键约定：
 //   * 索引里存的是**池内绝对顶点号**（绘制时 baseVertex=0），所以任意区段都能独立绘制，
 //     也能把相连区段合并；不需要 baseVertex 参与寻址。
-//   * 释放只把索引区间**清零**（退化三角形，GPU 侧无害），顶点区留洞——省去搬运。
-//   * 空洞积累到一定程度就**整理（compact）**：清空竞技场并让调用方重新网格化全部段，
-//     比一味扩容更能约束显存（重新网格化是分帧预算内的，已有通路）。
+//   * 释放只把索引区间**清零**（退化三角形，GPU 侧无害），顶点/索引区间进入 free-list 复用；
+//     分配失败且空洞过多时才 compact，compact 会清空竞技场并让调用方重新网格化全部段。
 
 import { VERTEX_STRIDE } from './vertexformat.js';
 
@@ -85,6 +84,43 @@ export function createMeshPool(options = {}) {
 
   let vertexUsed = 0, solidUsed = 0, translucentUsed = 0;
   let vertexLive = 0, solidLive = 0, translucentLive = 0;
+  const freeVert = [];
+  const freeSolid = [];
+  const freeTrans = [];
+
+  function addFree(list, offset, size) {
+    if (!(size > 0)) return;
+    let i = 0;
+    while (i < list.length && list[i].offset < offset) i++;
+    list.splice(i, 0, { offset, size });
+    for (let j = list.length - 1; j > 0; j--) {
+      const a = list[j - 1];
+      const b = list[j];
+      if (a.offset + a.size >= b.offset) {
+        a.size = Math.max(a.size, b.offset + b.size - a.offset);
+        list.splice(j, 1);
+      }
+    }
+  }
+
+  function findSlot(list, size, used, capacity) {
+    if (!(size > 0)) return { fromFree: false, offset: used };
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].size >= size) return { fromFree: true, freeIndex: i, offset: list[i].offset };
+    }
+    if (used + size <= capacity) return { fromFree: false, offset: used };
+    return null;
+  }
+
+  function commitSlot(list, slot, size) {
+    if (!(size > 0) || !slot.fromFree) return;
+    const f = list[slot.freeIndex];
+    if (f.size === size) list.splice(slot.freeIndex, 1);
+    else {
+      f.offset += size;
+      f.size -= size;
+    }
+  }
 
   const api = {
     get vertexCapacity() { return vertexCapacity; },
@@ -109,22 +145,24 @@ export function createMeshPool(options = {}) {
 
     /** 分配一段：顶点区 + 实体索引区 + 半透明索引区。空间不足返回 null（由调用方决定扩容/整理）。 */
     allocate(vertexCount, solidIndexCount, translucentIndexCount) {
-      if (vertexUsed + vertexCount > vertexCapacity
-        || solidUsed + solidIndexCount > solidIndexCapacity
-        || translucentUsed + translucentIndexCount > translucentIndexCapacity) {
-        return null;
-      }
+      const v = findSlot(freeVert, vertexCount, vertexUsed, vertexCapacity);
+      const s = findSlot(freeSolid, solidIndexCount, solidUsed, solidIndexCapacity);
+      const t = findSlot(freeTrans, translucentIndexCount, translucentUsed, translucentIndexCapacity);
+      if (!v || !s || !t) return null;
+      commitSlot(freeVert, v, vertexCount);
+      commitSlot(freeSolid, s, solidIndexCount);
+      commitSlot(freeTrans, t, translucentIndexCount);
+      if (!v.fromFree) vertexUsed += vertexCount;
+      if (!s.fromFree) solidUsed += solidIndexCount;
+      if (!t.fromFree) translucentUsed += translucentIndexCount;
       const handle = {
-        vertexOffset: vertexUsed,
+        vertexOffset: v.offset,
         vertexCount,
-        solidFirst: solidUsed,
+        solidFirst: s.offset,
         solidCount: solidIndexCount,
-        translucentFirst: translucentUsed,
+        translucentFirst: t.offset,
         translucentCount: translucentIndexCount,
       };
-      vertexUsed += vertexCount;
-      solidUsed += solidIndexCount;
-      translucentUsed += translucentIndexCount;
       vertexLive += vertexCount;
       solidLive += solidIndexCount;
       translucentLive += translucentIndexCount;
@@ -132,13 +170,16 @@ export function createMeshPool(options = {}) {
     },
 
     /**
-     * 释放：返回需要在 GPU 索引缓冲上清零的区间（数组下标已是索引缓冲内的绝对位置）。
-     * 顶点的洞不去动（索引清零后没人引用它）。
+     * 释放：区间清零后进入 free-list 复用；返回需要在 GPU 索引缓冲上清零的区间
+     *（数组下标已是索引缓冲内的绝对位置）。
      */
     free(handle) {
       vertexLive -= handle.vertexCount;
       solidLive -= handle.solidCount;
       translucentLive -= handle.translucentCount;
+      addFree(freeVert, handle.vertexOffset, handle.vertexCount);
+      addFree(freeSolid, handle.solidFirst, handle.solidCount);
+      addFree(freeTrans, handle.translucentFirst, handle.translucentCount);
       const ranges = [];
       if (handle.solidCount) ranges.push([handle.solidFirst, handle.solidCount]);
       if (handle.translucentCount) ranges.push([solidIndexCapacity + handle.translucentFirst, handle.translucentCount]);
@@ -175,6 +216,7 @@ export function createMeshPool(options = {}) {
     compact() {
       vertexUsed = 0; solidUsed = 0; translucentUsed = 0;
       vertexLive = 0; solidLive = 0; translucentLive = 0;
+      freeVert.length = 0; freeSolid.length = 0; freeTrans.length = 0;
     },
 
     /** 供调试/HUD 的概览。 */

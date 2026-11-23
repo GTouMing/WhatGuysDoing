@@ -1,6 +1,7 @@
 package github.gtouming.what_guys_doing.web;
 
 import github.gtouming.what_guys_doing.core.SessionHub;
+import github.gtouming.what_guys_doing.world.LowresStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,6 +135,50 @@ public final class HttpConnection implements Runnable {
         if ("/api/assets/status".equals(path)) {
             byte[] body = hub.assetStatusJson().getBytes(StandardCharsets.UTF_8);
             respond(out, 200, "OK", "application/json; charset=utf-8", body, null, keepAlive);
+            return keepAlive;
+        }
+        if ("/api/lowres/status".equals(path)) {
+            byte[] body = hub.lowresStatusJson().getBytes(StandardCharsets.UTF_8);
+            respond(out, 200, "OK", "application/json; charset=utf-8", body, null, keepAlive);
+            return keepAlive;
+        }
+        if (path.startsWith("/api/lowres/") && path.endsWith(".png")) {
+            String rest = path.substring("/api/lowres/".length(), path.length() - 4);
+            String[] segments = rest.split("/");
+            if (segments.length == 3) {
+                try {
+                    int lod = Integer.parseInt(segments[1]);
+                    int split = segments[2].indexOf('_');
+                    if (split > 0) {
+                        int x = Integer.parseInt(segments[2].substring(0, split));
+                        int z = Integer.parseInt(segments[2].substring(split + 1));
+                        LowresStore.TileResult result = hub.lowresTile(segments[0], lod, x, z);
+                        if (result != null && result.pending()) {
+                            respond(out, 202, "Accepted", "text/plain; charset=utf-8",
+                                    "generating".getBytes(StandardCharsets.UTF_8), null, keepAlive);
+                            return keepAlive;
+                        }
+                        if (result != null && result.empty()) {
+                            respond(out, 204, "No Content", "image/png", new byte[0], null, keepAlive);
+                            return keepAlive;
+                        }
+                        byte[] body = result == null ? null : result.bytes();
+                        if (body != null) {
+                            String etag = lowresEtag(body);
+                            if (etag.equals(headers.get("if-none-match"))) {
+                                respond(out, 304, "Not Modified", "image/png", new byte[0], etag, keepAlive);
+                                return keepAlive;
+                            }
+                            respond(out, 200, "OK", "image/png",
+                                    "HEAD".equals(method) ? new byte[0] : body, etag, keepAlive);
+                            return keepAlive;
+                        }
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            respond(out, 404, "Not Found", "text/plain; charset=utf-8",
+                    "lowres tile not found".getBytes(StandardCharsets.UTF_8), null, keepAlive);
             return keepAlive;
         }
         if ("/api/models-bundle".equals(path)) {
@@ -296,6 +341,10 @@ public final class HttpConnection implements Runnable {
     private static String entityBundleEtag() {
         entityBundle();
         return ENTITY_BUNDLE_ETAG;
+    }
+
+    private static String lowresEtag(byte[] body) {
+        return '"' + Integer.toHexString(java.util.Arrays.hashCode(body)) + '-' + body.length + '"';
     }
 
     private static String queryParam(String query, String key) {

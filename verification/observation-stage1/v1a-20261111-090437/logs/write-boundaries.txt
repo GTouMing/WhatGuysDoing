@@ -1,0 +1,2 @@
+PASS NonWritableChannelException leaves current synthetic bytes unchanged
+PASS failed atomic move raises AccessDeniedException; no fallback or promotion

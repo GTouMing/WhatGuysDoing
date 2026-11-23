@@ -32,18 +32,25 @@ export function rightOf(cam) {
   return [-Math.cos(cam.yaw * rad), 0, Math.sin(cam.yaw * rad)];
 }
 
-/** WASD / 空格 / Ctrl 移动。keys 为按下的小写键名集合（空格用 ' '）。 */
+/** WASD / 空格 / Shift 移动。keys 为按下的小写键名集合（空格用 ' '）。 */
 export function moveCamera(cam, keys, dt) {
   const f = forwardOf(cam);
   const r = rightOf(cam);
   let v = cam.speed * dt;
-  if (keys.has('shift')) v *= 3;
-  if (keys.has('w')) { cam.x += f[0] * v; cam.y += f[1] * v; cam.z += f[2] * v; }
-  if (keys.has('s')) { cam.x -= f[0] * v; cam.y -= f[1] * v; cam.z -= f[2] * v; }
-  if (keys.has('d')) { cam.x += r[0] * v; cam.z += r[2] * v; }
-  if (keys.has('a')) { cam.x -= r[0] * v; cam.z -= r[2] * v; }
-  if (keys.has(' ')) cam.y += v;
-  if (keys.has('control')) cam.y -= v;
+  if (keys.has('control')) v *= 3;
+  let dx = 0, dy = 0, dz = 0;
+  if (keys.has('w')) { dx += f[0]; dz += f[2]; }
+  if (keys.has('s')) { dx -= f[0]; dz -= f[2]; }
+  if (keys.has('d')) { dx += r[0]; dz += r[2]; }
+  if (keys.has('a')) { dx -= r[0]; dz -= r[2]; }
+  if (keys.has(' ')) dy += 1;
+  if (keys.has('shift')) dy -= 1;
+  const len = Math.hypot(dx, dy, dz);
+  if (len > 0) {
+    cam.x += dx / len * v;
+    cam.y += dy / len * v;
+    cam.z += dz / len * v;
+  }
 }
 
 /** 列主序透视矩阵。 */
@@ -150,11 +157,11 @@ export function projectPoint(cam, aspect, point) {
   return [cx / cw, cy / cw, cw];
 }
 
-export function buildViewProj(cam, aspect) {
+export function buildViewProj(cam, aspect, far = 2000) {
   const view = new Float32Array(16);
   const proj = new Float32Array(16);
   mat4View(view, cam);
-  mat4Perspective(proj, (70 * Math.PI) / 180, aspect, 0.1, 2000);
+  mat4Perspective(proj, (70 * Math.PI) / 180, aspect, 0.1, far);
   const out = new Float32Array(16);
   mat4Multiply(out, proj, view);
   return out;

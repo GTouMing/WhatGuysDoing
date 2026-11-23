@@ -1,0 +1,1 @@
+PASS caller reads complete replacement bytes after force and atomic move
