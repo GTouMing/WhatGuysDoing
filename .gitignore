@@ -25,4 +25,6 @@ run
 
 # Local agent / scratch
 .commandcode/
+.dsh-code-index/
 $null
+/AGENTS.md
